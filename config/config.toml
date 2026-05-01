@@ -1,0 +1,48 @@
+[server]
+# Puerto del API REST interno
+port = 8080
+# Interfaz de red (0.0.0.0 para todas)
+bind_address = "0.0.0.0"
+
+[logging]
+# Nivel de log: trace, debug, info, warn, error
+level = "info"
+# Formato: pretty, json, compact
+format = "pretty"
+
+[service]
+# Nombre del servicio en Windows
+name = "CupraFlow"
+# Descripción del servicio
+description = "Agente de gestión de red y balanceo de carga"
+# Inicio automático: auto, manual, disabled
+startup = "auto"
+
+# Configuración de balanceo (fase 4)
+[loadbalancer]
+enabled = false
+# Algoritmo: round_robin, least_connections, ip_hash
+algorithm = "round_robin"
+# Intervalo de health check en segundos
+health_check_interval = 30
+
+# Upstreams de ejemplo (para testing futuro)
+[[loadbalancer.backends]]
+name = "backend1"
+address = "127.0.0.1:3001"
+weight = 1
+
+[[loadbalancer.backends]]
+name = "backend2"
+address = "127.0.0.1:3002"
+weight = 1
+
+[update]
+# Canal de actualización: stable, beta, dev
+channel = "stable"
+# Verificar actualizaciones al inicio
+check_on_startup = true
+# Intervalo de chequeo en horas (0 = solo al inicio)
+check_interval = 24
+# URL base del repositorio GitHub
+github_repo = "tuusuario/cupraflow"

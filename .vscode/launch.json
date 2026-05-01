@@ -1,0 +1,35 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "Build",
+      "type": "node-terminal",
+      "request": "launch",
+      "command": "cargo build"
+    },
+    {
+      "name": "Build Release",
+      "type": "node-terminal",
+      "request": "launch",
+      "command": "cargo build --release"
+    },
+    {
+      "name": "Run",
+      "type": "node-terminal",
+      "request": "launch",
+      "command": "cargo run"
+    },
+    {
+      "name": "Run --help",
+      "type": "node-terminal",
+      "request": "launch",
+      "command": "cargo run -- help"
+    },
+    {
+      "name": "Run version",
+      "type": "node-terminal",
+      "request": "launch",
+      "command": "cargo run -- version"
+    }
+  ]
+}

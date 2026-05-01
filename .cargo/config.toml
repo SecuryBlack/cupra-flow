@@ -1,0 +1,15 @@
+[net]
+git-fetch-with-cli = true
+retry = 5
+timeout = 120
+offline = false
+
+[http]
+timeout = 120
+multiplexing = true
+
+[registries.crates-io]
+protocol = "sparse"
+
+[build]
+jobs = 2
