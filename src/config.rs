@@ -103,18 +103,9 @@ impl Config {
         Ok(config)
     }
 
-    /// Inicializa el suscriptor de tracing segun la config
+    /// Inicializa el suscriptor de tracing segun la config (stdout/stderr)
     pub fn init_logging(&self) -> anyhow::Result<()> {
-        let level = match self.logging.level.to_lowercase().as_str() {
-            "trace" => "trace",
-            "debug" => "debug",
-            "info" => "info",
-            "warn" => "warn",
-            "error" => "error",
-            _ => "info",
-        };
-
-        let env_filter = tracing_subscriber::EnvFilter::new(level);
+        let env_filter = Self::build_env_filter();
 
         match self.logging.format.to_lowercase().as_str() {
             "json" => {
@@ -138,5 +129,29 @@ impl Config {
         }
 
         Ok(())
+    }
+
+    /// Inicializa logging a archivo (para modo servicio Windows sin consola)
+    #[cfg(windows)]
+    pub fn init_logging_file(&self) -> anyhow::Result<()> {
+        let env_filter = Self::build_env_filter();
+        let log_dir = r"C:\ProgramData\CupraFlow";
+        std::fs::create_dir_all(log_dir)?;
+
+        let file_appender = tracing_appender::rolling::daily(log_dir, "cupraflow.log");
+
+        tracing_subscriber::fmt()
+            .with_env_filter(env_filter)
+            .with_writer(file_appender)
+            .with_ansi(false)
+            .init();
+
+        Ok(())
+    }
+
+    fn build_env_filter() -> tracing_subscriber::EnvFilter {
+        let level = std::env::var("RUST_LOG")
+            .unwrap_or_else(|_| "info".to_string());
+        tracing_subscriber::EnvFilter::new(level)
     }
 }

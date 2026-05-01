@@ -21,31 +21,37 @@
 - [x] Crear `.gitignore` para Rust
 - [x] Subir a GitHub (ver `docs/GITHUB_SETUP.md`)
 
-### Hito 1.2: Servicio Windows [PENDIENTE]
-- [ ] Implementar wrapper como servicio Windows (usando crate `windows-service`)
-- [ ] Crear script de instalacion del servicio (`cupraflow install`)
-- [ ] Crear script de desinstalacion (`cupraflow uninstall`)
-- [ ] Manejar arranque automatico del servicio
-- [ ] Test: Instalar en Windows limpio y verificar que el servicio aparece en `services.msc`
+### Hito 1.2: Servicio Windows [COMPLETADO]
+- [x] Implementar wrapper como servicio Windows (usando crate `windows-service`)
+- [x] Crear script de instalacion del servicio (`cupraflow install`)
+- [x] Crear script de desinstalacion (`cupraflow uninstall`)
+- [x] Manejar arranque automatico del servicio (AutoStart / OnDemand / Disabled)
+- [x] Test: Instalar en Windows limpio y verificar que el servicio aparece en `services.msc` / `sc query`
 
-**Bloqueo:** Requiere dependencia `windows-service` (no disponible offline)
+**Notas:**
+- El binario detecta automaticamente si fue lanzado por el SCM (modo servicio) o por consola.
+- En modo servicio, los logs se escriben a `C:\ProgramData\CupraFlow\cupraflow.log`.
+- El modo consola maneja `install`, `uninstall`, `start`, `stop`, `status`.
+- Resuelto: inferencia de tipos con `windows-service 0.7` + `clap 4.6` requiere anotaciones explícitas (`None::<&OsStr>`).
 
-### Hito 1.3: Instalador MSI/EXE [PENDIENTE]
-- [ ] Elegir herramienta (WiX Toolset / cargo-wix / Inno Setup)
-- [ ] Crear script de build del instalador
-- [ ] Incluir prerequisitos (VC++ Redistributable si es necesario)
-- [ ] Crear flujo de instalacion silenciosa (`/S` o `/quiet`)
-- [ ] Test: Instalar en VM Windows sin desarrollo previo
+### Hito 1.3: Instalador y Distribucion [COMPLETADO]
+- [x] Elegir estrategia: script PowerShell + ZIP (estilo oxi-pulse)
+- [x] Crear `scripts/install.ps1` (instalacion silenciosa y automatica)
+- [x] Crear `.github/workflows/release.yml` (build + release automatico)
+- [x] Incluir config por defecto en el paquete ZIP
+- [x] Script maneja: descarga, checksum, registro de servicio, start, restart-on-failure
+- [ ] Test: Instalar en VM Windows limpia via `irm ... | iex`
 - [ ] Test: Desinstalar completamente sin residuos
 
 ---
 
-## Fase 2: Sistema de Actualizacion (GitHub) [PENDIENTE]
+## Fase 2: Sistema de Actualizacion (GitHub) [EN PROGRESO]
 ### Hito 2.1: Releases en GitHub
-- [ ] Crear repositorio GitHub publico/privado
-- [ ] Configurar GitHub Actions para builds automaticos
-- [ ] Crear estructura de versionado semantico (`v1.0.0`)
-- [ ] Generar artefactos de release (binarios + assets)
+- [x] Repositorio GitHub configurado
+- [x] GitHub Actions para builds automaticos (`.github/workflows/release.yml`)
+- [x] Empaquetado ZIP con binario + config
+- [x] Checksums SHA256 generados automaticamente
+- [ ] Crear primera release (`v0.1.0`) y validar artefactos
 - [ ] Crear `latest.json` o usar GitHub Releases API para versionado
 
 ### Hito 2.2: Auto-Updater
@@ -145,7 +151,7 @@
 - **CLI:** `clap` v4 (derive macros)
 - **Config:** `serde` + `toml`
 - **Logging:** `tracing` + `tracing-subscriber`
-- **Servicio Windows:** Pendiente (requiere `windows-service` crate)
+- **Servicio Windows:** `windows-service` crate (v0.7)
 - **Instalador:** Pendiente (requiere `cargo-wix`)
 
 ### Objetivo (cuando Cargo funcione)
@@ -202,10 +208,21 @@ cupraflow/
 - [x] CLI con clap responde a todos los comandos definidos
 - [x] Logging con tracing funciona (formatos: pretty, compact, json)
 - [x] Configuracion por defecto funciona si falta config.toml
+- [x] Servicio Windows: codigo compila con `windows-service` v0.7
+- [x] Comandos `install`, `uninstall`, `start`, `stop` implementados (requieren ejecucion como Administrador)
+- [x] Modo servicio detecta SCM vs consola automaticamente (error 1063)
+- [x] Servicio instala correctamente (AutoStart, descripcion, nombre)
+- [x] Servicio inicia y detiene correctamente via SCM
+- [x] Logs de servicio se escriben a `C:\ProgramData\CupraFlow\cupraflow.log.YYYY-MM-DD`
+- [x] Servicio desinstala limpiamente sin residuos
+- [x] Script `scripts/install.ps1` adaptado de oxi-pulse
+- [x] Workflow `.github/workflows/release.yml` creado
+- [x] Build local genera ZIP + SHA256 (`scripts/build.bat`)
+- [x] Config se busca en multiples rutas: exe dir, exe dir/config, ProgramData
 
 ## Notas
 - Cada hito debe ser probado independientemente antes de pasar al siguiente
 - Versionar con Git tags en cada hito completado
 - Mantener CHANGELOG.md actualizado
 - Compilar en release con `cargo build --release`
-- El binario actual pesa aproximadamente ~200KB (solo stdlib)
+- El binario release pesa aproximadamente ~3.5MB (con tokio + windows-service + tracing)

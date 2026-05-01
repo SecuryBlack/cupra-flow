@@ -14,9 +14,11 @@ toml = "0.8"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt", "json"] }
 anyhow = "1.0"
+tokio = { version = "1.35", features = ["full"] }
+tracing-appender = "0.2"
 
 [target.'cfg(windows)'.dependencies]
-# windows-service se anadira en el Hito 1.2
+windows-service = "0.7"
 
 [profile.release]
 opt-level = 3
