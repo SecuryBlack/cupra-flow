@@ -2,13 +2,13 @@
 setlocal enabledelayedexpansion
 
 echo ===========================================
-echo  CupraFlow - Test de Servicio Windows
+echo  Cupra-Flow - Test de Servicio Windows
 echo ===========================================
 echo.
 
 set EXE=%~dp0..\target\release\cupraflow.exe
-set SERVICE_NAME=CupraFlow
-set LOG_DIR=C:\ProgramData\CupraFlow
+set SERVICE_NAME=Cupra-Flow
+set LOG_DIR=C:\ProgramData\Cupra-Flow
 
 echo [1/6] Instalando servicio...
 "%EXE%" install

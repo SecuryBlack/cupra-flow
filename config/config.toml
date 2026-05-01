@@ -45,4 +45,4 @@ check_on_startup = true
 # Intervalo de chequeo en horas (0 = solo al inicio)
 check_interval = 24
 # URL base del repositorio GitHub
-github_repo = "tuusuario/cupraflow"
+github_repo = "tuusuario/cupra-flow"

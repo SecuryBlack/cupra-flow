@@ -47,7 +47,7 @@ jobs:
         if: matrix.archive_ext == 'zip'
         shell: pwsh
         run: |
-          $asset = "cupraflow-${{ matrix.target }}"
+          $asset = "cupra-flow-${{ matrix.target }}"
           $stage = "${asset}"
           New-Item -ItemType Directory -Path $stage | Out-Null
           Copy-Item "target\${{ matrix.target }}\release\cupraflow.exe" "$stage\cupraflow.exe"

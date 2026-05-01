@@ -81,7 +81,7 @@ impl Default for Config {
                 channel: "stable".to_string(),
                 check_on_startup: true,
                 check_interval: 24,
-                github_repo: "sb-mcampoe/cupraflow".to_string(),
+                github_repo: "sb-mcampoe/cupra-flow".to_string(),
             },
         }
     }

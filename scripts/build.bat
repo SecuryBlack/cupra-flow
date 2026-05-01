@@ -1,7 +1,7 @@
 @echo off
 cd /d "%~dp0.."
 echo ======================================
-echo  CupraFlow - Build Script
+echo  Cupra-Flow - Build Script
 echo ======================================
 
 REM Verificar Rust

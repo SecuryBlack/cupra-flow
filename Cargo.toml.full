@@ -5,7 +5,7 @@ edition = "2021"
 authors = ["CupraFlow Team"]
 description = "Agente de gestion de red y balanceo de carga"
 license = "MIT"
-repository = "https://github.com/tuusuario/cupraflow"
+repository = "https://github.com/tuusuario/cupra-flow"
 
 # DEPENDENCIAS COMPLETAS (para cuando se resuelva el problema de red)
 # Copiar este contenido a Cargo.toml cuando cargo funcione correctamente
