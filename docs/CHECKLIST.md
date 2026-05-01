@@ -1,9 +1,8 @@
 # CupraFlow - Checklist de Desarrollo
 
 ## NOTA IMPORTANTE
-**Estado actual:** Proyecto compilable en modo OFFLINE (sin dependencias externas) debido a bug de Cargo/libcurl en Windows con resolucion DNS. 
-**Solucion temporal:** Usando solo stdlib de Rust. Las dependencias (clap, tokio, serde) se anadiran cuando se resuelva el problema de red.
-**Documentacion:** Ver `docs/CARGO_FIX.md` para soluciones del problema de red.
+**Estado actual:** Cargo funciona correctamente. El bug de libcurl/Cargo en Windows fue resuelto.
+**Stack activo:** clap, serde, toml, tracing, anyhow.
 
 ---
 
@@ -11,20 +10,16 @@
 ### Hito 1.1: Estructura base del proyecto [COMPLETADO]
 - [x] Crear estructura de carpetas (`/src`, `/config`, `/web`, `/scripts`, `/docs`)
 - [x] Elegir stack tecnologico: **Rust 1.75+**
-- [x] Crear `Cargo.toml` con metadatos del proyecto (modo offline/stdlib)
+- [x] Crear `Cargo.toml` con metadatos del proyecto
 - [x] Crear archivo de configuracion base (`config/config.toml`)
-- [x] Implementar sistema de logging basico (println! + eprintln!)
-- [x] Crear CLI basico con comandos: `install`, `uninstall`, `start`, `stop`, `status`, `version`, `help`
+- [x] Implementar sistema de logging con `tracing` + `tracing-subscriber`
+- [x] Crear CLI con `clap` derive macros: `install`, `uninstall`, `start`, `stop`, `status`, `version`, `check`, `help`
+- [x] Implementar parseo de configuracion con `serde` + `toml`
 - [x] Compilar exitosamente en release (`cargo build --release`)
 - [x] Probar ejecutable: `cupraflow.exe version` funciona
 - [x] Inicializar repositorio Git
 - [x] Crear `.gitignore` para Rust
 - [x] Subir a GitHub (ver `docs/GITHUB_SETUP.md`)
-
-**Pendiente:**
-- [ ] Anadir dependencias reales cuando Cargo funcione (clap, tokio, serde, etc.)
-- [ ] Reemplazar CLI manual por clap derive macros
-- [ ] Implementar logging con tracing
 
 ### Hito 1.2: Servicio Windows [PENDIENTE]
 - [ ] Implementar wrapper como servicio Windows (usando crate `windows-service`)
@@ -145,11 +140,11 @@
 ---
 
 ## Stack Tecnologico
-### Actual (modo offline)
-- **Runtime:** Rust 1.95+ (solo stdlib)
-- **CLI:** Manual con `std::env::args()`
-- **Config:** Archivos TOML/JSON parseados manualmente
-- **Logging:** `println!` / `eprintln!`
+### Actual
+- **Runtime:** Rust 1.95+ (binario nativo)
+- **CLI:** `clap` v4 (derive macros)
+- **Config:** `serde` + `toml`
+- **Logging:** `tracing` + `tracing-subscriber`
 - **Servicio Windows:** Pendiente (requiere `windows-service` crate)
 - **Instalador:** Pendiente (requiere `cargo-wix`)
 
@@ -169,7 +164,7 @@
 ```
 cupraflow/
 ├── .cargo/
-│   └── config.toml          # Configuracion de Cargo (fix red)
+│   └── config.toml          # Configuracion de Cargo
 ├── .git/                     # Repo Git
 ├── config/
 │   └── config.toml          # Configuracion del agente
@@ -179,12 +174,14 @@ cupraflow/
 ├── scripts/
 │   └── build.bat            # Script de build Windows
 ├── src/
-│   └── main.rs              # Codigo fuente (solo stdlib)
+│   ├── main.rs              # Punto de entrada
+│   ├── cli.rs               # Definicion CLI con clap
+│   └── config.rs            # Estructuras de config con serde
 ├── target/
 │   └── release/
 │       └── cupraflow.exe    # Binario compilado
-├── Cargo.toml               # Config actual (sin deps)
-├── Cargo.toml.full          # Config completa (con deps)
+├── Cargo.toml               # Config actual
+├── Cargo.toml.full          # Config completa de referencia
 └── README.md                # Pendiente crear
 ```
 
@@ -201,7 +198,10 @@ cupraflow/
 - [x] Ejecutable generado: `target/release/cupraflow.exe`
 - [x] Comando `version` funciona correctamente
 - [x] Comando `help` funciona correctamente
-- [x] CLI manual responde a todos los comandos definidos
+- [x] Comando `check` carga y valida config.toml correctamente
+- [x] CLI con clap responde a todos los comandos definidos
+- [x] Logging con tracing funciona (formatos: pretty, compact, json)
+- [x] Configuracion por defecto funciona si falta config.toml
 
 ## Notas
 - Cada hito debe ser probado independientemente antes de pasar al siguiente
