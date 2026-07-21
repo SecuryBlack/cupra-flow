@@ -56,6 +56,6 @@ Ver `docs/CHECKLIST.md` para el roadmap completo por fases.
 
 Si ves el error `getaddrinfo() thread failed to start`, ver `docs/CARGO_FIX.md`.
 
-## Licencia
+## License
 
-MIT
+CupraFlow is licensed under the [Apache License, Version 2.0](LICENSE).
