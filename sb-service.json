@@ -1,0 +1,8 @@
+{
+  "name": "CupraFlow Agent",
+  "description": "Agente en Rust de gestión de red y balanceo de carga",
+  "type": "rust",
+  "role": "agent",
+  "port": 8080,
+  "start": "cargo run"
+}
