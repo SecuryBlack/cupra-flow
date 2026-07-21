@@ -6,6 +6,8 @@ use tracing::{info, warn};
 /// Configuracion principal de CupraFlow
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct Config {
+    #[serde(default)]
+    pub version: Option<String>,
     pub server: ServerConfig,
     pub logging: LoggingConfig,
     pub service: ServiceConfig,
@@ -58,6 +60,7 @@ pub struct UpdateConfig {
 impl Default for Config {
     fn default() -> Self {
         Self {
+            version: Some(env!("CARGO_PKG_VERSION").to_string()),
             server: ServerConfig {
                 port: 8080,
                 bind_address: "0.0.0.0".to_string(),
@@ -98,7 +101,14 @@ impl Config {
         }
 
         let content = fs::read_to_string(path)?;
-        let config: Config = toml::from_str(&content)?;
+        let mut config: Config = toml::from_str(&content)?;
+        let current_pkg_version = env!("CARGO_PKG_VERSION");
+        if config.version.as_deref() != Some(current_pkg_version) {
+            config.version = Some(current_pkg_version.to_string());
+            if let Ok(updated_toml) = toml::to_string_pretty(&config) {
+                let _ = fs::write(path, updated_toml);
+            }
+        }
         info!("Configuracion cargada desde: {:?}", path);
         Ok(config)
     }

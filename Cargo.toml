@@ -1,6 +1,6 @@
 [package]
 name = "cupraflow"
-version = "0.1.0"
+version = "0.1.1"
 edition = "2021"
 authors = ["CupraFlow Team"]
 description = "Agente de gestion de red y balanceo de carga"
