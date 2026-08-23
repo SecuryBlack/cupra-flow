@@ -1,5 +1,4 @@
 use serde::{Deserialize, Serialize};
-use std::fs;
 use std::path::Path;
 use tracing::{info, warn};
 
@@ -84,38 +83,32 @@ impl Default for Config {
                 channel: "stable".to_string(),
                 check_on_startup: true,
                 check_interval: 24,
-                github_repo: "sb-mcampoe/cupra-flow".to_string(),
+                github_repo: "securyblack/cupra-flow".to_string(),
             },
         }
     }
 }
 
 impl Config {
-    /// Carga la configuracion desde un archivo TOML
+    /// Carga la configuracion desde un archivo TOML. Si no existe, usa la
+    /// configuracion por defecto (comportamiento de
+    /// `sb_agent_core::config::load`, no algo que haya que replicar aqui).
     pub fn from_file<P: AsRef<Path>>(path: P) -> anyhow::Result<Self> {
         let path = path.as_ref();
         if !path.exists() {
             warn!("Archivo de configuracion no encontrado: {:?}", path);
             info!("Usando configuracion por defecto");
-            return Ok(Config::default());
         }
 
-        let content = fs::read_to_string(path)?;
-        let mut config: Config = toml::from_str(&content)?;
-        let current_pkg_version = env!("CARGO_PKG_VERSION");
-        if config.version.as_deref() != Some(current_pkg_version) {
-            config.version = Some(current_pkg_version.to_string());
-            if let Ok(updated_toml) = toml::to_string_pretty(&config) {
-                let _ = fs::write(path, updated_toml);
-            }
-        }
+        let config: Config = sb_agent_core::config::load(path).map_err(|e| anyhow::anyhow!("{e}"))?;
+        let _ = sb_agent_core::config::sync_version_field(path, env!("CARGO_PKG_VERSION"));
         info!("Configuracion cargada desde: {:?}", path);
         Ok(config)
     }
 
     /// Inicializa el suscriptor de tracing segun la config (stdout/stderr)
     pub fn init_logging(&self) -> anyhow::Result<()> {
-        let env_filter = Self::build_env_filter();
+        let env_filter = self.build_env_filter();
 
         match self.logging.format.to_lowercase().as_str() {
             "json" => {
@@ -144,7 +137,7 @@ impl Config {
     /// Inicializa logging a archivo (para modo servicio Windows sin consola)
     #[cfg(windows)]
     pub fn init_logging_file(&self) -> anyhow::Result<()> {
-        let env_filter = Self::build_env_filter();
+        let env_filter = self.build_env_filter();
         let log_dir = r"C:\ProgramData\CupraFlow";
         std::fs::create_dir_all(log_dir)?;
 
@@ -159,9 +152,12 @@ impl Config {
         Ok(())
     }
 
-    fn build_env_filter() -> tracing_subscriber::EnvFilter {
-        let level = std::env::var("RUST_LOG")
-            .unwrap_or_else(|_| "info".to_string());
+    /// Prioridad: `RUST_LOG` (si está definida) > `self.logging.level` > `"info"`.
+    /// Antes ignoraba `logging.level` por completo — el nivel de `config.toml`
+    /// se cargaba pero nunca se aplicaba a nada (mismo bug que se encontró y
+    /// arregló en FerroSentry al retrofitear sobre sb-agent-core).
+    fn build_env_filter(&self) -> tracing_subscriber::EnvFilter {
+        let level = std::env::var("RUST_LOG").unwrap_or_else(|_| self.logging.level.clone());
         tracing_subscriber::EnvFilter::new(level)
     }
 }

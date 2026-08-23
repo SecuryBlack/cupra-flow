@@ -154,6 +154,8 @@ fn service_main_impl(_arguments: Vec<OsString>) {
 
     let _ = config.init_logging_file();
 
+    let sb_status = sb_agent_core::status::StatusHandle::new("cupraflow", env!("CARGO_PKG_VERSION"));
+
     let (shutdown_tx, shutdown_rx) = oneshot::channel::<()>();
     let shutdown_tx = std::sync::Mutex::new(Some(shutdown_tx));
 
@@ -197,8 +199,19 @@ fn service_main_impl(_arguments: Vec<OsString>) {
         .expect("failed to build tokio runtime");
 
     rt.block_on(async {
+        sb_agent_core::status::spawn_server(
+            sb_status.clone(),
+            sb_agent_core::status::default_socket_path("cupraflow"),
+        );
+        sb_status.set_state("running");
+        sb_status.set_details(serde_json::json!({
+            "loadbalancer_enabled": config.loadbalancer.enabled,
+            "backends": config.loadbalancer.backends.len(),
+        }));
+
         let _ = shutdown_rx.await;
         info!("Shutdown signal received, stopping service...");
+        sb_status.set_state("stopping");
     });
 
     // Marcar como Stopped
