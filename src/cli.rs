@@ -30,6 +30,8 @@ pub enum Commands {
     Stop,
     /// Muestra el estado del servicio
     Status,
+    /// TUI en vivo leyendo el status socket (solo mientras el servicio corre)
+    Top,
     /// Muestra informacion de version
     Version,
     /// Valida el archivo de configuracion

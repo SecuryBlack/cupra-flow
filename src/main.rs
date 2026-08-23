@@ -63,6 +63,19 @@ fn run_console() -> Result<()> {
             println!("  Descripcion: {}", config.service.description);
             println!("  Estado:      Usa 'sc query {}' para ver estado real", config.service.name);
             println!("  API:         {}:{}", config.server.bind_address, config.server.port);
+            match sb_agent_core::status_client::read_once("cupraflow") {
+                Ok(payload) => println!(
+                    "  Socket:      {}",
+                    serde_json::to_string_pretty(&payload).unwrap_or_default()
+                ),
+                Err(e) => println!("  Socket:      no disponible ({e}) — ¿el servicio está corriendo?"),
+            }
+        }
+        Commands::Top => {
+            if let Err(e) = sb_agent_core::tui::run_top("cupraflow") {
+                eprintln!("[cupraflow] {e}");
+                std::process::exit(1);
+            }
         }
         Commands::Version => {
             println!("CupraFlow v{}", env!("CARGO_PKG_VERSION"));
@@ -125,6 +138,19 @@ fn main() -> Result<()> {
             println!("  Nombre:      {}", config.service.name);
             println!("  Descripcion: {}", config.service.description);
             println!("  API:         {}:{}", config.server.bind_address, config.server.port);
+            match sb_agent_core::status_client::read_once("cupraflow") {
+                Ok(payload) => println!(
+                    "  Socket:      {}",
+                    serde_json::to_string_pretty(&payload).unwrap_or_default()
+                ),
+                Err(e) => println!("  Socket:      no disponible ({e}) — ¿el servicio está corriendo?"),
+            }
+        }
+        Commands::Top => {
+            if let Err(e) = sb_agent_core::tui::run_top("cupraflow") {
+                eprintln!("[cupraflow] {e}");
+                std::process::exit(1);
+            }
         }
         Commands::Version => {
             println!("CupraFlow v{}", env!("CARGO_PKG_VERSION"));
