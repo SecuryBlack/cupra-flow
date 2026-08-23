@@ -22,10 +22,16 @@ const SERVICE_NAME: &str = "CupraFlow";
 /// Instala CupraFlow como servicio de Windows.
 #[cfg(windows)]
 pub fn install(config: &Config) -> anyhow::Result<()> {
-    let manager = ServiceManager::local_computer(None::<&std::ffi::OsStr>, ServiceManagerAccess::CREATE_SERVICE).map_err(|e| {
+    let manager = ServiceManager::local_computer(
+        None::<&std::ffi::OsStr>,
+        ServiceManagerAccess::CREATE_SERVICE,
+    )
+    .map_err(|e| {
         if let windows_service::Error::Winapi(ref io) = e {
             if io.raw_os_error() == Some(5) {
-                return anyhow::anyhow!("Permiso denegado. Ejecuta como Administrador para instalar el servicio.");
+                return anyhow::anyhow!(
+                    "Permiso denegado. Ejecuta como Administrador para instalar el servicio."
+                );
             }
         }
         anyhow::anyhow!(e)
@@ -64,10 +70,16 @@ pub fn install(config: &Config) -> anyhow::Result<()> {
 /// Desinstala el servicio de Windows.
 #[cfg(windows)]
 pub fn uninstall(config: &Config) -> anyhow::Result<()> {
-    let manager = ServiceManager::local_computer(None::<&std::ffi::OsStr>, ServiceManagerAccess::CONNECT).map_err(|e| {
+    let manager = ServiceManager::local_computer(
+        None::<&std::ffi::OsStr>,
+        ServiceManagerAccess::CONNECT,
+    )
+    .map_err(|e| {
         if let windows_service::Error::Winapi(ref io) = e {
             if io.raw_os_error() == Some(5) {
-                return anyhow::anyhow!("Permiso denegado. Ejecuta como Administrador para desinstalar el servicio.");
+                return anyhow::anyhow!(
+                    "Permiso denegado. Ejecuta como Administrador para desinstalar el servicio."
+                );
             }
         }
         anyhow::anyhow!(e)
@@ -77,13 +89,19 @@ pub fn uninstall(config: &Config) -> anyhow::Result<()> {
         Ok(s) => s,
         Err(_) => {
             warn!("El servicio '{}' no existe", config.service.name);
-            println!("[INFO] El servicio '{}' no esta instalado.", config.service.name);
+            println!(
+                "[INFO] El servicio '{}' no esta instalado.",
+                config.service.name
+            );
             return Ok(());
         }
     };
 
     service.delete()?;
-    info!("Servicio '{}' desinstalado correctamente", config.service.name);
+    info!(
+        "Servicio '{}' desinstalado correctamente",
+        config.service.name
+    );
     println!("[OK] Servicio '{}' desinstalado.", config.service.name);
 
     Ok(())
@@ -92,10 +110,16 @@ pub fn uninstall(config: &Config) -> anyhow::Result<()> {
 /// Inicia el servicio ya instalado via SCM.
 #[cfg(windows)]
 pub fn start_service(config: &Config) -> anyhow::Result<()> {
-    let manager = ServiceManager::local_computer(None::<&std::ffi::OsStr>, ServiceManagerAccess::CONNECT).map_err(|e| {
+    let manager = ServiceManager::local_computer(
+        None::<&std::ffi::OsStr>,
+        ServiceManagerAccess::CONNECT,
+    )
+    .map_err(|e| {
         if let windows_service::Error::Winapi(ref io) = e {
             if io.raw_os_error() == Some(5) {
-                return anyhow::anyhow!("Permiso denegado. Ejecuta como Administrador para iniciar el servicio.");
+                return anyhow::anyhow!(
+                    "Permiso denegado. Ejecuta como Administrador para iniciar el servicio."
+                );
             }
         }
         anyhow::anyhow!(e)
@@ -110,10 +134,16 @@ pub fn start_service(config: &Config) -> anyhow::Result<()> {
 /// Detiene el servicio via SCM.
 #[cfg(windows)]
 pub fn stop_service(config: &Config) -> anyhow::Result<()> {
-    let manager = ServiceManager::local_computer(None::<&std::ffi::OsStr>, ServiceManagerAccess::CONNECT).map_err(|e| {
+    let manager = ServiceManager::local_computer(
+        None::<&std::ffi::OsStr>,
+        ServiceManagerAccess::CONNECT,
+    )
+    .map_err(|e| {
         if let windows_service::Error::Winapi(ref io) = e {
             if io.raw_os_error() == Some(5) {
-                return anyhow::anyhow!("Permiso denegado. Ejecuta como Administrador para detener el servicio.");
+                return anyhow::anyhow!(
+                    "Permiso denegado. Ejecuta como Administrador para detener el servicio."
+                );
             }
         }
         anyhow::anyhow!(e)
@@ -146,7 +176,8 @@ fn service_main_impl(_arguments: Vec<OsString>) {
         .ok()
         .and_then(|p| p.parent().map(|d| d.to_path_buf()))
         .and_then(|dir| {
-            Config::from_file(dir.join("config.toml")).ok()
+            Config::from_file(dir.join("config.toml"))
+                .ok()
                 .or_else(|| Config::from_file(dir.join("config").join("config.toml")).ok())
         })
         .or_else(|| Config::from_file(r"C:\ProgramData\CupraFlow\config.toml").ok())
@@ -154,14 +185,14 @@ fn service_main_impl(_arguments: Vec<OsString>) {
 
     let _ = config.init_logging_file();
 
-    let sb_status = sb_agent_core::status::StatusHandle::new("cupraflow", env!("CARGO_PKG_VERSION"));
+    let sb_status =
+        sb_agent_core::status::StatusHandle::new("cupraflow", env!("CARGO_PKG_VERSION"));
 
     let (shutdown_tx, shutdown_rx) = oneshot::channel::<()>();
     let shutdown_tx = std::sync::Mutex::new(Some(shutdown_tx));
 
-    let status_handle = service_control_handler::register(
-        SERVICE_NAME,
-        move |control_event| match control_event {
+    let status_handle =
+        service_control_handler::register(SERVICE_NAME, move |control_event| match control_event {
             ServiceControl::Stop | ServiceControl::Shutdown => {
                 if let Ok(mut guard) = shutdown_tx.lock() {
                     if let Some(tx) = guard.take() {
@@ -172,9 +203,8 @@ fn service_main_impl(_arguments: Vec<OsString>) {
             }
             ServiceControl::Interrogate => ServiceControlHandlerResult::NoError,
             _ => ServiceControlHandlerResult::NotImplemented,
-        },
-    )
-    .expect("failed to register service control handler");
+        })
+        .expect("failed to register service control handler");
 
     // Marcar como Running
     status_handle

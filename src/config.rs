@@ -100,7 +100,8 @@ impl Config {
             info!("Usando configuracion por defecto");
         }
 
-        let config: Config = sb_agent_core::config::load(path).map_err(|e| anyhow::anyhow!("{e}"))?;
+        let config: Config =
+            sb_agent_core::config::load(path).map_err(|e| anyhow::anyhow!("{e}"))?;
         let _ = sb_agent_core::config::sync_version_field(path, env!("CARGO_PKG_VERSION"));
         info!("Configuracion cargada desde: {:?}", path);
         Ok(config)

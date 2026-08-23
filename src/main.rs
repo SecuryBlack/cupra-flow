@@ -37,7 +37,10 @@ fn run_console() -> Result<()> {
     let config = Config::from_file(&args.config)?;
     let _ = config.init_logging();
 
-    info!(version = env!("CARGO_PKG_VERSION"), "CupraFlow modo consola");
+    info!(
+        version = env!("CARGO_PKG_VERSION"),
+        "CupraFlow modo consola"
+    );
 
     match args.command {
         Commands::Install => {
@@ -61,14 +64,22 @@ fn run_console() -> Result<()> {
             println!("Estado del servicio CupraFlow:");
             println!("  Nombre:      {}", config.service.name);
             println!("  Descripcion: {}", config.service.description);
-            println!("  Estado:      Usa 'sc query {}' para ver estado real", config.service.name);
-            println!("  API:         {}:{}", config.server.bind_address, config.server.port);
+            println!(
+                "  Estado:      Usa 'sc query {}' para ver estado real",
+                config.service.name
+            );
+            println!(
+                "  API:         {}:{}",
+                config.server.bind_address, config.server.port
+            );
             match sb_agent_core::status_client::read_once("cupraflow") {
                 Ok(payload) => println!(
                     "  Socket:      {}",
                     serde_json::to_string_pretty(&payload).unwrap_or_default()
                 ),
-                Err(e) => println!("  Socket:      no disponible ({e}) — ¿el servicio está corriendo?"),
+                Err(e) => {
+                    println!("  Socket:      no disponible ({e}) — ¿el servicio está corriendo?")
+                }
             }
         }
         Commands::Top => {
@@ -137,13 +148,18 @@ fn main() -> Result<()> {
             println!("Estado del servicio CupraFlow:");
             println!("  Nombre:      {}", config.service.name);
             println!("  Descripcion: {}", config.service.description);
-            println!("  API:         {}:{}", config.server.bind_address, config.server.port);
+            println!(
+                "  API:         {}:{}",
+                config.server.bind_address, config.server.port
+            );
             match sb_agent_core::status_client::read_once("cupraflow") {
                 Ok(payload) => println!(
                     "  Socket:      {}",
                     serde_json::to_string_pretty(&payload).unwrap_or_default()
                 ),
-                Err(e) => println!("  Socket:      no disponible ({e}) — ¿el servicio está corriendo?"),
+                Err(e) => {
+                    println!("  Socket:      no disponible ({e}) — ¿el servicio está corriendo?")
+                }
             }
         }
         Commands::Top => {
