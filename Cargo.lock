@@ -339,7 +339,7 @@ dependencies = [
 
 [[package]]
 name = "cupraflow"
-version = "0.1.2"
+version = "0.1.3"
 dependencies = [
  "anyhow",
  "clap",
@@ -1529,7 +1529,8 @@ checksum = "9774ba4a74de5f7b1c1451ed6cd5285a32eddb5cccb8cc655a4e50009e06477f"
 [[package]]
 name = "sb-agent-core"
 version = "0.1.0"
-source = "git+https://github.com/securyblack/sb-agent-core?branch=master#ad4499e45bc005e7262b4a12947780f7bb09125b"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "68b4226c7051a8b002b3f26f3a67a36743ea225a25704b5f0394e34fa0de06aa"
 dependencies = [
  "crossterm",
  "ratatui",
