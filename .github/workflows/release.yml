@@ -13,6 +13,7 @@ jobs:
     uses: securyblack/sb-agent-core/.github/workflows/release.yml@master
     with:
       binary-name: cupraflow
+      windows-static-crt: true
       extra-files: "config/config.toml"
       targets-json: |
         [
