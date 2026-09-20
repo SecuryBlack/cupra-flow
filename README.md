@@ -1,55 +1,69 @@
 # CupraFlow
 
-Agente de gestión de red, alta disponibilidad y conmutación por error (VIP Failover) escrito en Rust para Linux y Windows.
+High-availability, network routing, and VIP failover agent written in pure Rust for Linux and Windows servers.
 
 [![Website](https://img.shields.io/badge/Website-cupraflow.dev-F97316?style=flat-square)](https://cupraflow.dev)
 [![Ecosystem](https://img.shields.io/badge/Ecosystem-SecuryBlack-33E1BF?style=flat-square)](https://securyblack.com)
 [![License: Apache 2.0](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](LICENSE)
 [![Rust](https://img.shields.io/badge/built%20with-Rust-orange.svg)](https://www.rust-lang.org/)
 
-> **Parte del ecosistema SecuryBlack:**
-> [OxiPulse (Métricas)](https://github.com/securyblack/oxi-pulse) · [FerroSentry (Seguridad)](https://github.com/securyblack/ferro-sentry) · **CupraFlow (Alta Disponibilidad)** · [CromoForge (GitOps)](https://github.com/securyblack/cromo-forge) · [TitanVault (Backups)](https://github.com/securyblack/titan-vault) · [SecuryBlack Cloud](https://securyblack.com)
+> **Part of the SecuryBlack ecosystem:**
+> [OxiPulse (Metrics)](https://github.com/securyblack/oxi-pulse) · [FerroSentry (Security)](https://github.com/securyblack/ferro-sentry) · **CupraFlow (High Availability)** · [CromoForge (GitOps)](https://github.com/securyblack/cromo-forge) · [TitanVault (Backups)](https://github.com/securyblack/titan-vault) · [SecuryBlack Cloud](https://securyblack.com)
 
 ---
 
-## 🚀 Capacidades Principales
+## 🚀 Core Capabilities
 
-- **IP Flotante Virtual (VIP Failover):** Implementación moderna estilo Keepalived/VRRP para migración de IP en caliente (< 500 ms) sin caída de servicio.
-- **Malla Cifrada WireGuard:** Interconexión punto a punto de nodos y clusters híbridos (bare-metal + cloud VPS) con ChaCha20-Poly1305.
-- **Health-Checks Inteligentes L4/L7:** Sondeo activo de puertos TCP y endpoints HTTP antes de enrutar tráfico o desencadenar failovers.
-- **Consola TUI Standalone:** Monitorización en vivo del estado del cluster (nodos MASTER/BACKUP, latencias y peers) con interfaz de terminal interactiva.
-- **Integración SecuryBlack Cloud:** Telemetría de red, túnel gRPC y reporte de eventos en tiempo real.
+- **Floating Virtual IP (VIP Failover):** Modern Keepalived / VRRP v2/v3 implementation for seamless sub-second (< 500 ms) IP migration with zero downtime.
+- **Encrypted WireGuard Mesh:** Point-to-point encrypted overlay network interconnecting hybrid bare-metal and multi-cloud servers with ChaCha20-Poly1305.
+- **Intelligent L4 / L7 Health Checks:** Continuous active probing of TCP sockets and HTTP/gRPC endpoints before routing traffic or initiating failovers.
+- **Standalone Interactive TUI:** Real-time terminal cockpit visualizing cluster status (MASTER / BACKUP state, VRRP heartbeats, and WireGuard peer latency).
+- **SecuryBlack Cloud Integration:** Network telemetry streaming, gRPC secure tunnel, and instant failover event reporting.
 
 ---
 
-## 📋 Uso y Comandos
+## 📦 Quickstart & Installation
+
+### Linux — One-line Install
+```bash
+curl -fsSL https://install.cupraflow.dev | sudo bash
+```
+
+### Windows — PowerShell (Administrator)
+```powershell
+irm https://install.cupraflow.dev | iex
+```
+
+---
+
+## 📋 CLI & TUI Usage
 
 ```bash
-# Lanzar la interfaz interactiva de terminal (TUI)
+# Launch interactive terminal UI
 cupraflow tui
 
-# Ver estado de interfaces y nodos
+# Check network interfaces and cluster state
 cupraflow status
 
-# Ver versión
+# View version info
 cupraflow version
 ```
 
 ---
 
-## 🌐 Ecosistema Open Source de SecuryBlack
+## 🌐 SecuryBlack Open Source Ecosystem
 
-CupraFlow es el pilar de red y alta disponibilidad dentro de la suite de agentes modulares de SecuryBlack:
+CupraFlow is the networking and high-availability pillar of the SecuryBlack modular agent suite:
 
-| Agente | Enfoque Principal | Web Oficial | Repositorio |
+| Agent | Core Focus | Official Website | Repository |
 | :--- | :--- | :--- | :--- |
-| **OxiPulse** | Telemetría, métricas OTLP y logs sin overhead | [oxipulse.dev](https://oxipulse.dev) | [securyblack/oxi-pulse](https://github.com/securyblack/oxi-pulse) |
-| **FerroSentry** | EDR ligero, auditd, detección de fuerza bruta y firewall | [ferrosentry.dev](https://ferrosentry.dev) | [securyblack/ferro-sentry](https://github.com/securyblack/ferro-sentry) |
-| **CupraFlow** | Alta disponibilidad, IP flotante VIP y balanceo de tráfico | [cupraflow.dev](https://cupraflow.dev) | [securyblack/cupra-flow](https://github.com/securyblack/cupra-flow) |
-| **CromoForge** | Despliegues continuos, GitOps y gestión de contenedores | [cromoforge.dev](https://cromoforge.dev) | [securyblack/cromo-forge](https://github.com/securyblack/cromo-forge) |
-| **TitanVault** | Copias de seguridad en streaming y recuperación ante desastres | [titanvault.dev](https://titanvault.dev) | [securyblack/titan-vault](https://github.com/securyblack/titan-vault) |
+| **OxiPulse** | Telemetry, OTLP metrics, and zero-overhead vital signs | [oxipulse.dev](https://oxipulse.dev) | [securyblack/oxi-pulse](https://github.com/securyblack/oxi-pulse) |
+| **FerroSentry** | Lightweight EDR, auditd, brute-force mitigation & firewall | [ferrosentry.dev](https://ferrosentry.dev) | [securyblack/ferro-sentry](https://github.com/securyblack/ferro-sentry) |
+| **CupraFlow** | High availability, floating VIP failover & traffic balancing | [cupraflow.dev](https://cupraflow.dev) | [securyblack/cupra-flow](https://github.com/securyblack/cupra-flow) |
+| **CromoForge** | Continuous delivery, GitOps & container management | [cromoforge.dev](https://cromoforge.dev) | [securyblack/cromo-forge](https://github.com/securyblack/cromo-forge) |
+| **TitanVault** | Zero-disk streaming backups & disaster recovery | [titanvault.dev](https://titanvault.dev) | [securyblack/titan-vault](https://github.com/securyblack/titan-vault) |
 
-Todos los agentes pueden gestionarse de forma centralizada y visual conectándolos a [SecuryBlack Cloud](https://securyblack.com).
+All agents can be centrally managed with unified observability by connecting them to [SecuryBlack Cloud](https://securyblack.com).
 
 ---
 
