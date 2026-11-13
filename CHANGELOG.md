@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.1] - 2026-11-13
+
+### Security
+- **Dependencies**: `sb-agent-core` 0.4.3, which moves `self_update` to 1.3 and `zip` to 9.5 (GHSA-m665-v7pm-7grj, GHSA-q7v9-x93c-xqv3, GHSA-8hxf-qr8p-62x4), and `rustls` 0.23.46. Releases are still verified with zipsign before installing.
+
+### Fixed
+- **Installer**: the checksum check looks for the asset's own name, and a reinstall restarts the service so the new binary runs.
+
 ## [0.2.0] - 2026-11-13
 
 ### Added
