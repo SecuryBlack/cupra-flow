@@ -67,8 +67,6 @@ chmod 600 "$CONFIG_FILE"
 
 sb_write_systemd_unit "cupraflow" "CupraFlow traffic agent (SecuryBlack)" "${INSTALL_DIR}/${BIN_NAME}" "$CONFIG_DIR"
 sb_enable_start_service "cupraflow"
-# enable --now does not restart a running service: on reinstall it would keep the old binary.
-systemctl restart cupraflow
 
 sb_success "CupraFlow ${VERSION} installed and running"
 sb_info "Status: cupraflow status   Logs: journalctl -fu cupraflow"
