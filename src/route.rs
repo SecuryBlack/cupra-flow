@@ -53,12 +53,13 @@ impl Route {
             if !valid_host(h) {
                 return Err(format!("invalid host: {h:?}"));
             }
-            if self.hosts[..i].contains(h) {
+            // Caddy compara los hosts sin distinguir mayúsculas.
+            if self.hosts[..i].iter().any(|o| o.eq_ignore_ascii_case(h)) {
                 return Err(format!("repeated host: {h}"));
             }
         }
         for h in &self.redirect_hosts {
-            if !self.hosts[1..].contains(h) {
+            if !self.hosts[1..].iter().any(|o| o.eq_ignore_ascii_case(h)) {
                 return Err(format!(
                     "redirect host {h:?} must be one of the extra hosts"
                 ));
@@ -112,6 +113,7 @@ mod tests {
             ("id", json!("sbapp/../x")),
             ("hosts", json!([])),
             ("hosts", json!(["a.com", "a.com"])),
+            ("hosts", json!(["ejemplo.com", "EJEMPLO.com"])),
             ("hosts", json!(["a.com", "bad host"])),
             ("redirect_hosts", json!(["ejemplo.com"])),
             ("redirect_hosts", json!(["otro.com"])),

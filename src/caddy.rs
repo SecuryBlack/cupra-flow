@@ -124,9 +124,18 @@ pub async fn upsert_route(route: &Route) -> Result<(), String> {
         .header("Content-Type", "application/json")
         .body(body.clone())
         .send()
-        .await;
-    if matches!(&patched, Ok(r) if r.status().is_success()) {
+        .await
+        .map_err(|e| format!("Caddy admin API unreachable: {e}"))?;
+    let status = patched.status();
+    if status.is_success() {
         return Ok(());
+    }
+    // Solo se añade si la ruta no existe: tras cualquier otro fallo (o un
+    // timeout, que puede llegar con el cambio ya hecho) un POST dejaría dos
+    // rutas con el mismo `@id`.
+    let text = patched.text().await.unwrap_or_default();
+    if status != 404 && !text.contains("unknown object ID") {
+        return Err(format!("Caddy admin API returned {status}: {text}"));
     }
 
     let resp = client
