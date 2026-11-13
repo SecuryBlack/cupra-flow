@@ -1,29 +1,88 @@
-mod cli;
-mod config;
-mod service;
+//! CupraFlow — dueño del Caddy de SB en el servidor. Config, logging,
+//! servicio, updater, status socket e intake de órdenes vienen de
+//! `sb-agent-core`; aquí solo están las órdenes del proxy (`commands.rs`) y
+//! el módulo de Caddy (`caddy.rs`).
 
-use anyhow::Result;
-use clap::Parser;
+mod caddy;
+mod commands;
+mod config;
+mod route;
+
+use config::Config;
+use sb_agent_core::{
+    cli, command_intake, config as core_config, logging, service, status, updater,
+};
+use tokio::sync::oneshot;
 use tracing::info;
 
-use cli::{Cli, Commands};
-use config::Config;
+const AGENT_NAME: &str = "cupraflow";
+#[cfg(windows)]
+const SERVICE_DISPLAY_NAME: &str = "CupraFlow";
+
+async fn run(mut shutdown: oneshot::Receiver<()>) {
+    let config_path = core_config::default_config_path(AGENT_NAME);
+    let log_dir = config_path
+        .parent()
+        .expect("config path always has a parent")
+        .to_path_buf();
+    logging::init(AGENT_NAME, &log_dir, "info");
+
+    let version = env!("CARGO_PKG_VERSION");
+    info!("CupraFlow v{version} starting");
+
+    let cfg: Config = core_config::load(&config_path).unwrap_or_else(|e| {
+        tracing::error!("failed to load config: {e}");
+        std::process::exit(1);
+    });
+    let _ = core_config::sync_version_field(&config_path, version);
+
+    let status_handle = status::StatusHandle::new(AGENT_NAME, version);
+    status::spawn_server(
+        status_handle.clone(),
+        status::default_socket_path(AGENT_NAME),
+    );
+
+    let registry = command_intake::CommandRegistry::new();
+    commands::register(&registry);
+    command_intake::spawn_server(
+        registry,
+        command_intake::default_socket_path(AGENT_NAME),
+        command_intake::SigningContext {
+            server_token: cfg.token.clone().unwrap_or_default(),
+            target_agent: AGENT_NAME.to_string(),
+        },
+    );
+    #[cfg(unix)]
+    commands::spawn_local_server();
+
+    updater::start_daily_check(updater::UpdaterConfig::new(
+        "securyblack",
+        "cupra-flow",
+        "cupraflow",
+        version,
+    ));
+
+    status_handle.set_state("running");
+    // El estado de Caddy se refresca cada minuto para `cupraflow status`/`top`.
+    loop {
+        status_handle.set_details(serde_json::json!({ "caddy": caddy::state().await }));
+        tokio::select! {
+            _ = tokio::time::sleep(std::time::Duration::from_secs(60)) => {}
+            _ = &mut shutdown => {
+                info!("shutdown signal received, stopping");
+                status_handle.set_state("stopping");
+                break;
+            }
+        }
+    }
+}
 
 #[cfg(windows)]
 fn main() {
-    // En Windows, intentamos primero ejecutar como servicio (SCM).
-    // Si el proceso NO fue lanzado por el SCM (error 1063), caemos a modo consola.
-    match service::start() {
-        Ok(_) => {
-            // Modo servicio: nunca retorna hasta que el servicio se detiene
-        }
-        Err(windows_service::Error::Winapi(e)) if e.raw_os_error() == Some(1063) => {
-            // ERROR_FAILED_SERVICE_CONTROLLER_CONNECT: no somos un servicio, modo consola
-            if let Err(e) = run_console() {
-                eprintln!("[cupraflow] error: {e}");
-                std::process::exit(1);
-            }
-        }
+    cli::dispatch_common_args(AGENT_NAME, "cupraflow", env!("CARGO_PKG_VERSION"));
+    match service::windows::run_service(SERVICE_DISPLAY_NAME, run) {
+        Ok(_) => {}
+        Err(e) if service::windows::is_not_started_by_scm(&e) => service::run_console(run),
         Err(e) => {
             eprintln!("[cupraflow] service error: {e}");
             std::process::exit(1);
@@ -31,176 +90,8 @@ fn main() {
     }
 }
 
-#[cfg(windows)]
-fn run_console() -> Result<()> {
-    let args = Cli::parse();
-    let config = Config::from_file(&args.config)?;
-    let _ = config.init_logging();
-
-    info!(
-        version = env!("CARGO_PKG_VERSION"),
-        "CupraFlow modo consola"
-    );
-
-    match args.command {
-        Commands::Install => {
-            info!("Instalando servicio CupraFlow...");
-            service::install(&config)?;
-        }
-        Commands::Uninstall => {
-            info!("Desinstalando servicio CupraFlow...");
-            service::uninstall(&config)?;
-        }
-        Commands::Start => {
-            info!("Iniciando servicio CupraFlow via SCM...");
-            service::start_service(&config)?;
-        }
-        Commands::Stop => {
-            info!("Deteniendo servicio CupraFlow via SCM...");
-            service::stop_service(&config)?;
-        }
-        Commands::Status => {
-            info!("Consultando estado del servicio...");
-            println!("Estado del servicio CupraFlow:");
-            println!("  Nombre:      {}", config.service.name);
-            println!("  Descripcion: {}", config.service.description);
-            println!(
-                "  Estado:      Usa 'sc query {}' para ver estado real",
-                config.service.name
-            );
-            println!(
-                "  API:         {}:{}",
-                config.server.bind_address, config.server.port
-            );
-            match sb_agent_core::status_client::read_once("cupraflow") {
-                Ok(payload) => println!(
-                    "  Socket:      {}",
-                    serde_json::to_string_pretty(&payload).unwrap_or_default()
-                ),
-                Err(e) => {
-                    println!("  Socket:      no disponible ({e}) — ¿el servicio está corriendo?")
-                }
-            }
-        }
-        Commands::Top => {
-            if let Err(e) = sb_agent_core::tui::run_top("cupraflow") {
-                eprintln!("[cupraflow] {e}");
-                std::process::exit(1);
-            }
-        }
-        Commands::Version => {
-            println!("CupraFlow v{}", env!("CARGO_PKG_VERSION"));
-            println!("{}", env!("CARGO_PKG_DESCRIPTION"));
-            println!("Repositorio: {}", env!("CARGO_PKG_REPOSITORY"));
-            println!("Soporte: Windows / Linux");
-            println!("Stack: Rust + clap + serde + tracing + windows-service");
-        }
-        Commands::Check => {
-            info!("Validando configuracion...");
-            println!("Configuracion cargada correctamente:");
-            println!(
-                "  Server:      {}:{}",
-                config.server.bind_address, config.server.port
-            );
-            println!(
-                "  Logging:     nivel={}, formato={}",
-                config.logging.level, config.logging.format
-            );
-            println!(
-                "  Service:     nombre={}, startup={}",
-                config.service.name, config.service.startup
-            );
-            println!("  LB enabled:  {}", config.loadbalancer.enabled);
-            println!(
-                "  Update:      canal={}, intervalo={}h",
-                config.update.channel, config.update.check_interval
-            );
-            if config.loadbalancer.enabled {
-                println!("  Backends:");
-                for backend in &config.loadbalancer.backends {
-                    println!(
-                        "    - {} -> {} (weight: {})",
-                        backend.name, backend.address, backend.weight
-                    );
-                }
-            }
-            info!("Configuracion validada correctamente");
-        }
-    }
-
-    Ok(())
-}
-
 #[cfg(not(windows))]
-fn main() -> Result<()> {
-    let args = Cli::parse();
-    let config = Config::from_file(&args.config)?;
-    let _ = config.init_logging();
-
-    info!(version = env!("CARGO_PKG_VERSION"), "CupraFlow iniciado");
-
-    match args.command {
-        Commands::Install => service::install(&config)?,
-        Commands::Uninstall => service::uninstall(&config)?,
-        Commands::Start => service::start_service(&config)?,
-        Commands::Stop => service::stop_service(&config)?,
-        Commands::Status => {
-            println!("Estado del servicio CupraFlow:");
-            println!("  Nombre:      {}", config.service.name);
-            println!("  Descripcion: {}", config.service.description);
-            println!(
-                "  API:         {}:{}",
-                config.server.bind_address, config.server.port
-            );
-            match sb_agent_core::status_client::read_once("cupraflow") {
-                Ok(payload) => println!(
-                    "  Socket:      {}",
-                    serde_json::to_string_pretty(&payload).unwrap_or_default()
-                ),
-                Err(e) => {
-                    println!("  Socket:      no disponible ({e}) — ¿el servicio está corriendo?")
-                }
-            }
-        }
-        Commands::Top => {
-            if let Err(e) = sb_agent_core::tui::run_top("cupraflow") {
-                eprintln!("[cupraflow] {e}");
-                std::process::exit(1);
-            }
-        }
-        Commands::Version => {
-            println!("CupraFlow v{}", env!("CARGO_PKG_VERSION"));
-            println!("{}", env!("CARGO_PKG_DESCRIPTION"));
-            println!("Repositorio: {}", env!("CARGO_PKG_REPOSITORY"));
-            println!("Soporte: Windows / Linux");
-            println!("Stack: Rust + clap + serde + tracing");
-        }
-        Commands::Check => {
-            println!("Configuracion cargada correctamente:");
-            println!(
-                "  Server:      {}:{}",
-                config.server.bind_address, config.server.port
-            );
-            println!(
-                "  Logging:     nivel={}, formato={}",
-                config.logging.level, config.logging.format
-            );
-            println!(
-                "  Service:     nombre={}, startup={}",
-                config.service.name, config.service.startup
-            );
-            println!("  LB enabled:  {}", config.loadbalancer.enabled);
-            if config.loadbalancer.enabled {
-                println!("  Backends:");
-                for backend in &config.loadbalancer.backends {
-                    println!(
-                        "    - {} -> {} (weight: {})",
-                        backend.name, backend.address, backend.weight
-                    );
-                }
-            }
-        }
-    }
-
-    Ok(())
+fn main() {
+    cli::dispatch_common_args(AGENT_NAME, "cupraflow", env!("CARGO_PKG_VERSION"));
+    service::run_console(run);
 }

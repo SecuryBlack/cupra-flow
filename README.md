@@ -1,6 +1,6 @@
 # CupraFlow
 
-Rust agent under development for high availability and networking. The current code contains configuration, CLI and service scaffolding; the network/HA engine is not verified as operational. See the [workspace wiki](../sb-wiki/Producto/Estado%20actual.md).
+SecuryBlack's traffic agent. Since 0.2.0 it owns the server's Caddy proxy (`sb-caddy`): it installs it and manages one HTTPS route per app, and CromoForge asks it for routes. Multi-node routing, health checks and failover are not built yet. See the [workspace wiki](../sb-wiki/Producto/Estado%20actual.md).
 
 ## Use with SecuryBlack
 
@@ -22,41 +22,24 @@ Follow the agent-specific installation and configuration instructions below. Use
 
 ---
 
-## Planned capabilities (not verified as operational)
+## What it does today (0.2.0, Linux)
 
-- **Floating Virtual IP (VIP Failover):** Modern Keepalived / VRRP v2/v3 implementation for seamless sub-second (< 500 ms) IP migration with zero downtime.
-- **Encrypted WireGuard Mesh:** Point-to-point encrypted overlay network interconnecting hybrid bare-metal and multi-cloud servers with ChaCha20-Poly1305.
-- **Intelligent L4 / L7 Health Checks:** Continuous active probing of TCP sockets and HTTP/gRPC endpoints before routing traffic or initiating failovers.
-- **Standalone Interactive TUI:** Real-time terminal cockpit visualizing cluster status (MASTER / BACKUP state, VRRP heartbeats, and WireGuard peer latency).
-- **SecuryBlack Cloud Integration:** Network telemetry streaming, gRPC secure tunnel, and instant failover event reporting.
+- Installs and owns `sb-caddy` (Caddy 2.10 in Docker, admin API on `127.0.0.1:2019`).
+- Orders through the SecuryBlack panel: `proxy_install`, `proxy_status`, `route_set`, `route_remove`.
+- A local socket for CromoForge, so app deployments change their route through CupraFlow.
 
----
+Planned, not built: several upstreams per route, health checks, load balancing and forwarding between nodes.
 
-## 📦 Quickstart & Installation
-
-### Linux — One-line Install
-```bash
-curl -fsSL https://install.cupraflow.dev | sudo bash
-```
-
-### Windows — PowerShell (Administrator)
-```powershell
-irm https://install.cupraflow.dev | iex
-```
-
----
-
-## 📋 CLI & TUI Usage
+## Install (Linux)
 
 ```bash
-# Launch interactive terminal UI
-cupraflow tui
+curl -fsSL https://raw.githubusercontent.com/securyblack/cupra-flow/main/scripts/install.sh | sudo bash -s -- --token <TOKEN>
+```
 
-# Check network interfaces and cluster state
-cupraflow status
-
-# View version info
-cupraflow version
+```bash
+cupraflow status          # status socket snapshot
+cupraflow top             # live TUI
+journalctl -fu cupraflow  # logs
 ```
 
 ---
