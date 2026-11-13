@@ -7,7 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [0.2.0] - unreleased
+## [0.2.0] - 2026-11-13
 
 ### Added
 - **Proxy**: CupraFlow owns SecuryBlack's Caddy (`sb-caddy`), moved from CromoForge 0.7.2 with the same names, so an existing Caddy and its routes are adopted as they are.
