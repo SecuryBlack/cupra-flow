@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.2] - 2026-11-13
+
+### Changed
+- No functional changes. Release to check that 0.2.1, with the new updater (`self_update` 1.3 in `sb-agent-core` 0.4.3), updates itself while running as a service.
+
 ## [0.2.1] - 2026-11-13
 
 ### Security
