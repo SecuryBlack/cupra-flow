@@ -52,6 +52,9 @@ where
 fn http(timeout: Duration) -> Result<reqwest::Client, String> {
     reqwest::Client::builder()
         .no_proxy()
+        // Cada cambio de config reinicia la API de administración y corta las
+        // conexiones abiertas: una conexión nueva por petición.
+        .pool_max_idle_per_host(0)
         .redirect(reqwest::redirect::Policy::none())
         .timeout(timeout)
         .build()
