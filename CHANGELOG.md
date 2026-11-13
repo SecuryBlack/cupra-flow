@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.0] - unreleased
+
+### Added
+- **Proxy**: CupraFlow owns SecuryBlack's Caddy (`sb-caddy`), moved from CromoForge 0.7.2 with the same names, so an existing Caddy and its routes are adopted as they are.
+- **Orders**: `proxy_install`, `proxy_status`, `route_set` and `route_remove`, through Nexus (signed) and through a local socket for CromoForge (`/run/sb-agent/cupraflow-local-cmd.sock`).
+- **Linux**: real systemd service, installer with `--token`, `scripts/uninstall.sh`, Linux release builds and daily self-update.
+
+### Changed
+- **Dependencies**: `sb-agent-core` 0.4.2 (signed orders).
+- **Config**: `/etc/cupraflow/config.toml` only holds `token`; old sections are ignored.
+
+### Removed
+- The `clap` CLI (`install`, `start`, `stop`, `check`…) and the load-balancer config that was only printed. `--version`, `status` and `top` remain.
+
 ## [0.1.3] - 2026-08-23
 
 ### Changed

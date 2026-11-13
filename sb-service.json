@@ -1,8 +1,7 @@
 {
   "name": "CupraFlow Agent",
-  "description": "Agente en Rust de gestión de red y balanceo de carga",
+  "description": "Agente de tráfico de SB: gobierna el Caddy del servidor",
   "type": "rust",
   "role": "agent",
-  "port": 8080,
   "start": "cargo run"
 }
