@@ -40,9 +40,11 @@ sb_info "Installing CupraFlow ${VERSION} (${TARGET})"
 
 TMP_DIR="$(mktemp -d)"
 trap 'rm -rf "$TMP_DIR"' EXIT
-ASSET_URL="https://github.com/${REPO}/releases/download/${VERSION}/${BIN_NAME}-${TARGET}.tar.gz"
-sb_download_and_verify "$ASSET_URL" "$TMP_DIR/asset.tar.gz"
-sb_install_binary "$TMP_DIR/asset.tar.gz" "$BIN_NAME" "$INSTALL_DIR"
+# The .sha256 names the asset, so the download keeps that name.
+ASSET_NAME="${BIN_NAME}-${TARGET}.tar.gz"
+ASSET_URL="https://github.com/${REPO}/releases/download/${VERSION}/${ASSET_NAME}"
+sb_download_and_verify "$ASSET_URL" "$TMP_DIR/$ASSET_NAME"
+sb_install_binary "$TMP_DIR/$ASSET_NAME" "$BIN_NAME" "$INSTALL_DIR"
 
 mkdir -p "$CONFIG_DIR"
 chmod 700 "$CONFIG_DIR"
@@ -65,6 +67,8 @@ chmod 600 "$CONFIG_FILE"
 
 sb_write_systemd_unit "cupraflow" "CupraFlow traffic agent (SecuryBlack)" "${INSTALL_DIR}/${BIN_NAME}" "$CONFIG_DIR"
 sb_enable_start_service "cupraflow"
+# enable --now does not restart a running service: on reinstall it would keep the old binary.
+systemctl restart cupraflow
 
 sb_success "CupraFlow ${VERSION} installed and running"
 sb_info "Status: cupraflow status   Logs: journalctl -fu cupraflow"
