@@ -1,6 +1,6 @@
 [package]
 name = "cupraflow"
-version = "0.2.2"
+version = "0.3.0"
 edition = "2021"
 authors = ["CupraFlow Team"]
 description = "SecuryBlack traffic agent: owns the server's Caddy and its routes"

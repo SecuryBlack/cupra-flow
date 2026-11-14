@@ -1,11 +1,14 @@
 //! Ruta de CupraFlow, independiente del motor (contrato en
-//! `sb-wiki/Tecnica/CupraFlow v1 - contrato.md`). `caddy.rs` la traduce.
+//! `sb-wiki/Tecnica/CupraFlow v2 - contrato.md`). `caddy.rs` la traduce.
 
 use serde::Deserialize;
 use serde_json::Value;
+use std::net::{IpAddr, SocketAddr};
 
 /// Hosts como mucho: el principal y los 10 extra que admite la API.
 const MAX_HOSTS: usize = 11;
+/// Compañeros como mucho por ruta.
+const MAX_PEERS: usize = 10;
 
 #[derive(Debug, Deserialize)]
 pub struct Route {
@@ -17,12 +20,27 @@ pub struct Route {
     #[serde(default)]
     pub redirect_hosts: Vec<String>,
     pub upstreams: Vec<Upstream>,
-    /// Fase 2. En v1 se acepta y se ignora.
+    /// Otros servidores de la app (IP o nombre, `host:puerto` opcional; 443
+    /// por defecto). Vacío = ruta de un solo nodo, como en v1.
     #[serde(default)]
-    pub health: Value,
-    /// Fase 2. En v1 se acepta y se ignora.
+    pub peers: Vec<String>,
+    /// Comprobación activa del upstream local. Solo se usa con `peers`.
+    #[serde(default)]
+    pub health: Option<Health>,
+    /// Se acepta y se ignora: el reparto es siempre «primero el local».
     #[serde(default)]
     pub policy: Value,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct Health {
+    pub path: String,
+    #[serde(default = "default_interval")]
+    pub interval_secs: u64,
+}
+
+fn default_interval() -> u64 {
+    10
 }
 
 #[derive(Debug, Deserialize)]
@@ -39,6 +57,56 @@ fn valid_host(h: &str) -> bool {
         && h.len() <= 253
         && h.bytes()
             .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'.')
+}
+
+/// Un compañero: host para el `dial` (IPv6 entre corchetes) y puerto HTTPS.
+#[derive(Debug, PartialEq)]
+pub struct Peer {
+    pub host: String,
+    pub port: u16,
+}
+
+impl Peer {
+    pub fn parse(s: &str) -> Result<Peer, String> {
+        let bad = || format!("invalid peer: {s:?}");
+        if let Ok(a) = s.parse::<SocketAddr>() {
+            if a.port() == 0 {
+                return Err(bad());
+            }
+            return Ok(Peer::from_ip(a.ip(), a.port()));
+        }
+        let unbracketed = s
+            .strip_prefix('[')
+            .and_then(|r| r.strip_suffix(']'))
+            .unwrap_or(s);
+        if let Ok(ip) = unbracketed.parse::<IpAddr>() {
+            return Ok(Peer::from_ip(ip, 443));
+        }
+        let (host, port) = match s.split_once(':') {
+            Some((h, p)) => (h, p.parse::<u16>().map_err(|_| bad())?),
+            None => (s, 443),
+        };
+        if !valid_host(host) || port == 0 {
+            return Err(bad());
+        }
+        Ok(Peer {
+            host: host.to_ascii_lowercase(),
+            port,
+        })
+    }
+
+    fn from_ip(ip: IpAddr, port: u16) -> Peer {
+        let host = match ip {
+            IpAddr::V4(v4) => v4.to_string(),
+            IpAddr::V6(v6) => format!("[{v6}]"),
+        };
+        Peer { host, port }
+    }
+
+    /// El host sin corchetes, para resolverlo.
+    pub fn bare_host(&self) -> &str {
+        self.host.trim_start_matches('[').trim_end_matches(']')
+    }
 }
 
 impl Route {
@@ -72,10 +140,31 @@ impl Route {
             [] => return Err("a route needs an upstream".into()),
             _ => return Err("several upstreams need CupraFlow >= 0.3".into()),
         }
-        if !self.health.is_null() || !self.policy.is_null() {
-            tracing::warn!(id = %self.id, "route health/policy ignored until CupraFlow 0.3");
+        if self.peers.len() > MAX_PEERS {
+            return Err(format!("a route takes at most {MAX_PEERS} peers"));
+        }
+        let peers = self.peers()?;
+        for (i, p) in peers.iter().enumerate() {
+            if peers[..i].contains(p) {
+                return Err(format!("repeated peer: {}", self.peers[i]));
+            }
+        }
+        if let Some(h) = &self.health {
+            if !h.path.starts_with('/') || h.path.bytes().any(|b| b <= b' ' || b == 0x7f) {
+                return Err(format!("invalid health path: {:?}", h.path));
+            }
+            if !(1..=3600).contains(&h.interval_secs) {
+                return Err("health interval_secs must be 1 to 3600".into());
+            }
+        }
+        if !self.policy.is_null() {
+            tracing::warn!(id = %self.id, "route policy ignored: local first, then peers");
         }
         Ok(())
+    }
+
+    pub fn peers(&self) -> Result<Vec<Peer>, String> {
+        self.peers.iter().map(|p| Peer::parse(p)).collect()
     }
 
     pub fn primary(&self) -> &str {
@@ -103,8 +192,51 @@ mod tests {
     }
 
     #[test]
-    fn accepts_v1_route_and_ignores_phase2_fields() {
+    fn accepts_v1_route() {
         assert_eq!(route(ok()).validate(), Ok(()));
+    }
+
+    #[test]
+    fn accepts_peers() {
+        let mut v = ok();
+        v["peers"] = json!(["203.0.113.7", "nodo2.ejemplo.com:8443", "[2001:db8::1]:443"]);
+        v["policy"] = json!("round_robin");
+        assert_eq!(route(v).validate(), Ok(()));
+    }
+
+    #[test]
+    fn parses_peers() {
+        let p = |s| Peer::parse(s).unwrap();
+        assert_eq!(
+            p("203.0.113.7"),
+            Peer {
+                host: "203.0.113.7".into(),
+                port: 443
+            }
+        );
+        assert_eq!(p("203.0.113.7:8443").port, 8443);
+        assert_eq!(p("Nodo2.Ejemplo.com").host, "nodo2.ejemplo.com");
+        assert_eq!(p("2001:db8::1").host, "[2001:db8::1]");
+        assert_eq!(
+            p("[2001:db8::1]:444"),
+            Peer {
+                host: "[2001:db8::1]".into(),
+                port: 444
+            }
+        );
+        assert_eq!(p("[2001:db8::1]").bare_host(), "2001:db8::1");
+        for bad in [
+            "",
+            "a b",
+            "x.com:0",
+            "1.2.3.4:0",
+            "[::1]:0",
+            "x.com:99999",
+            "x.com:",
+            "http://x.com",
+        ] {
+            assert!(Peer::parse(bad).is_err(), "{bad:?} should fail");
+        }
     }
 
     #[test]
@@ -124,6 +256,13 @@ mod tests {
                 "upstreams",
                 json!([{ "dial": "127.0.0.1:1" }, { "dial": "127.0.0.1:2" }]),
             ),
+            ("peers", json!(["a.com", "A.com"])),
+            ("peers", json!(["1.2.3.4", "1.2.3.4:443"])),
+            ("peers", json!(["bad peer"])),
+            ("peers", json!(vec!["1.1.1.1"; 11])),
+            ("health", json!({ "path": "health" })),
+            ("health", json!({ "path": "/a b" })),
+            ("health", json!({ "path": "/", "interval_secs": 0 })),
         ];
         for (field, value) in cases {
             let mut v = ok();
