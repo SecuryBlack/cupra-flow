@@ -9,6 +9,11 @@ use std::net::{IpAddr, SocketAddr};
 const MAX_HOSTS: usize = 11;
 /// Compañeros como mucho por ruta.
 const MAX_PEERS: usize = 10;
+/// Prefijos de camino y entradas de `allow_ips` como mucho por ruta.
+const MAX_PATHS: usize = 10;
+const MAX_ALLOW: usize = 32;
+/// Sufijos de los `@id` de los objetos extra: ningún id de ruta puede acabar así.
+pub const EXTRA_SUFFIXES: [&str; 3] = ["-peers", "-acme", "-tls"];
 
 #[derive(Debug, Deserialize)]
 pub struct Route {
@@ -30,6 +35,42 @@ pub struct Route {
     /// Se acepta y se ignora: el reparto es siempre «primero el local».
     #[serde(default)]
     pub policy: Value,
+    /// Prefijos de camino (`/agents/me/`). Con ellos la ruta casa solo esos
+    /// caminos, sin quitar el prefijo, y va delante de las de solo nombre.
+    #[serde(default)]
+    pub paths: Vec<String>,
+    /// IPs o redes (CIDR) que pueden entrar, según la IP del socket. El resto
+    /// recibe un 403 sin llegar al upstream.
+    #[serde(default)]
+    pub allow_ips: Vec<String>,
+    /// Ruta sin upstream: 301 a este host, con el mismo camino y query.
+    #[serde(default)]
+    pub redirect_to: Option<String>,
+    #[serde(default)]
+    pub tls: Tls,
+    #[serde(default)]
+    pub upstream_protocol: Protocol,
+}
+
+/// De dónde sale el certificado de los hosts.
+#[derive(Debug, Default, Deserialize, PartialEq)]
+#[serde(rename_all = "lowercase")]
+pub enum Tls {
+    /// La política automática de Caddy (Let's Encrypt / ZeroSSL).
+    #[default]
+    Acme,
+    /// La CA interna de Caddy: para Cloudflare en modo «Full» o nombres no públicos.
+    Internal,
+}
+
+/// Cómo se habla con el upstream.
+#[derive(Debug, Default, Deserialize, PartialEq)]
+#[serde(rename_all = "lowercase")]
+pub enum Protocol {
+    #[default]
+    Http,
+    /// HTTP/2 sin TLS (gRPC), con streams sin límite de tiempo.
+    H2c,
 }
 
 #[derive(Debug, Deserialize)]
@@ -48,8 +89,37 @@ pub struct Upstream {
     pub dial: String,
 }
 
+fn valid_part(p: &str, max: usize) -> bool {
+    !p.is_empty() && p.len() <= max && p.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-')
+}
+
+/// `<app>` o `<app>.<nombre>` (otra ruta hacia el mismo contenedor).
 pub fn valid_id(id: &str) -> bool {
-    !id.is_empty() && id.len() <= 64 && id.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-')
+    let ok = match id.split_once('.') {
+        None => valid_part(id, 64),
+        Some((app, name)) => valid_part(app, 64) && valid_part(name, 32),
+    };
+    ok && !EXTRA_SUFFIXES.iter().any(|s| id.ends_with(s))
+}
+
+/// IP o red en notación CIDR.
+fn valid_cidr(s: &str) -> bool {
+    let (ip, len) = match s.split_once('/') {
+        Some((ip, len)) => (ip, Some(len)),
+        None => (s, None),
+    };
+    let Ok(ip) = ip.parse::<IpAddr>() else {
+        return false;
+    };
+    let max = if ip.is_ipv4() { 32 } else { 128 };
+    match len {
+        None => true,
+        Some(l) => l.parse::<u8>().is_ok_and(|l| l <= max),
+    }
+}
+
+fn valid_path(p: &str) -> bool {
+    p.starts_with('/') && p.len() <= 256 && !p.bytes().any(|b| b <= b' ' || b == 0x7f || b == b'*')
 }
 
 fn valid_host(h: &str) -> bool {
@@ -133,7 +203,21 @@ impl Route {
                 ));
             }
         }
+        if let Some(to) = &self.redirect_to {
+            if !valid_host(to) {
+                return Err(format!("invalid redirect_to: {to:?}"));
+            }
+            if !self.upstreams.is_empty()
+                || !self.peers.is_empty()
+                || self.health.is_some()
+                || !self.redirect_hosts.is_empty()
+                || self.upstream_protocol != Protocol::Http
+            {
+                return Err("a redirect_to route takes no upstreams, peers, health, redirect_hosts or upstream_protocol".into());
+            }
+        }
         match self.upstreams.as_slice() {
+            [] if self.redirect_to.is_some() => {}
             [u] if u.dial.starts_with("127.0.0.1:")
                 && u.dial["127.0.0.1:".len()..].parse::<u16>().is_ok() => {}
             [_] => return Err("the upstream must be 127.0.0.1:<port>".into()),
@@ -156,6 +240,22 @@ impl Route {
             if !(1..=3600).contains(&h.interval_secs) {
                 return Err("health interval_secs must be 1 to 3600".into());
             }
+        }
+        if self.paths.len() > MAX_PATHS {
+            return Err(format!("a route takes at most {MAX_PATHS} paths"));
+        }
+        if let Some(p) = self.paths.iter().find(|p| !valid_path(p)) {
+            return Err(format!("invalid path: {p:?}"));
+        }
+        if self.allow_ips.len() > MAX_ALLOW {
+            return Err(format!("a route takes at most {MAX_ALLOW} allow_ips"));
+        }
+        if let Some(ip) = self.allow_ips.iter().find(|ip| !valid_cidr(ip)) {
+            return Err(format!("invalid allow_ips entry: {ip:?}"));
+        }
+        // Lo reenviado llega con la IP del compañero, que la lista rechazaría.
+        if !self.allow_ips.is_empty() && !self.peers.is_empty() {
+            return Err("allow_ips and peers cannot go together".into());
         }
         if !self.policy.is_null() {
             tracing::warn!(id = %self.id, "route policy ignored: local first, then peers");
@@ -237,6 +337,82 @@ mod tests {
         ] {
             assert!(Peer::parse(bad).is_err(), "{bad:?} should fail");
         }
+    }
+
+    #[test]
+    fn accepts_v3_options() {
+        let mut v = ok();
+        v["id"] = json!("11111111-2222-3333-4444-555555555555.api");
+        v["paths"] = json!(["/agents/me/", "/heartbeats/ping/"]);
+        v["allow_ips"] = json!(["100.64.0.0/10", "fd7a:115c:a1e0::/48", "203.0.113.7"]);
+        v["tls"] = json!("internal");
+        v["upstream_protocol"] = json!("h2c");
+        assert_eq!(route(v).validate(), Ok(()));
+
+        let r = route(json!({
+            "id": "x.www",
+            "hosts": ["www.ejemplo.com"],
+            "upstreams": [],
+            "redirect_to": "ejemplo.com",
+        }));
+        assert_eq!(r.validate(), Ok(()));
+    }
+
+    #[test]
+    fn ids() {
+        for good in [
+            "abc",
+            "11111111-2222-3333-4444-555555555555",
+            "a.api",
+            "a.www-2",
+        ] {
+            assert!(valid_id(good), "{good}");
+        }
+        let long = "x".repeat(65);
+        for bad in [
+            "",
+            "a.b.c",
+            ".a",
+            "a.",
+            "a/b",
+            "a-tls",
+            "a.b-peers",
+            "a-acme",
+            &long,
+        ] {
+            assert!(!valid_id(bad), "{bad}");
+        }
+    }
+
+    #[test]
+    fn rejects_bad_v3_options() {
+        let cases = [
+            ("paths", json!(["agents"])),
+            ("paths", json!(["/a*"])),
+            ("paths", json!(["/a b"])),
+            ("paths", json!(vec!["/a"; 11])),
+            ("allow_ips", json!(["100.64.0.0/33"])),
+            ("allow_ips", json!(["::/129"])),
+            ("allow_ips", json!(["tailscale"])),
+            ("tls", json!("letsencrypt")),
+            ("upstream_protocol", json!("grpc")),
+            ("redirect_to", json!("bad host")),
+            // redirect_to con upstream
+            ("redirect_to", json!("ejemplo.com")),
+        ];
+        for (field, value) in cases {
+            let mut v = ok();
+            v[field] = value.clone();
+            let r: Result<Route, _> = serde_json::from_value(v);
+            assert!(
+                r.map_or(true, |r| r.validate().is_err()),
+                "{field} = {value} should fail"
+            );
+        }
+        let mut v = ok();
+        v["allow_ips"] = json!(["100.64.0.0/10"]);
+        v["peers"] = json!(["203.0.113.7"]);
+        assert!(route(v).validate().is_err(), "allow_ips + peers");
     }
 
     #[test]

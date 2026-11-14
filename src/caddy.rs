@@ -7,7 +7,7 @@
 //! así que nunca escribimos un Caddyfile. Mismos nombres que CromoForge: un
 //! Caddy que ya montó CromoForge se adopta tal cual.
 
-use crate::route::{Peer, Route};
+use crate::route::{Peer, Protocol, Route, Tls, EXTRA_SUFFIXES};
 use serde_json::{json, Value};
 use std::ffi::OsStr;
 use std::net::IpAddr;
@@ -99,6 +99,14 @@ fn local_proxy(route: &Route) -> Value {
         .map(|u| json!({ "dial": u.dial }))
         .collect();
     let mut proxy = json!({ "handler": "reverse_proxy", "upstreams": upstreams });
+    if route.upstream_protocol == Protocol::H2c {
+        // gRPC sin TLS. Caddy no pone límite de tiempo a las peticiones ni a
+        // los streams (`read_timeout`, `write_timeout` y `stream_timeout`
+        // van a 0 por defecto); el volcado inmediato hace falta para los
+        // streams bidireccionales.
+        proxy["transport"] = json!({ "protocol": "http", "versions": ["h2c", "2"] });
+        proxy["flush_interval"] = json!(-1);
+    }
     if !route.peers.is_empty() {
         proxy["headers"] = json!({ "request": {
             "set": { "X-Forwarded-For": ["{http.vars.sb_client}"] },
@@ -129,6 +137,14 @@ fn local_proxy(route: &Route) -> Value {
 /// quien conecta, como hace Caddy por defecto.
 pub fn route_json(route: &Route, peer_ips: &[IpAddr]) -> Value {
     let mut routes = Vec::new();
+    if !route.allow_ips.is_empty() {
+        // `remote_ip` mira la IP del socket, nunca X-Forwarded-For.
+        routes.push(json!({
+            "match": [{ "not": [{ "remote_ip": { "ranges": route.allow_ips } }] }],
+            "handle": [{ "handler": "static_response", "status_code": 403, "body": "Forbidden" }],
+            "terminal": true
+        }));
+    }
     if !route.redirect_hosts.is_empty() {
         routes.push(json!({
             "match": [{ "host": route.redirect_hosts }],
@@ -150,19 +166,36 @@ pub fn route_json(route: &Route, peer_ips: &[IpAddr]) -> Value {
             "handle": [{ "handler": "vars", "sb_client": "{http.request.header.X-Forwarded-For}" }]
         }));
     }
-    let proxy = local_proxy(route);
+    let last = match &route.redirect_to {
+        Some(to) => json!({
+            "handler": "static_response",
+            "status_code": 301,
+            "headers": { "Location": [format!("https://{to}{{http.request.uri}}")] }
+        }),
+        None => local_proxy(route),
+    };
     let handle = if routes.is_empty() {
-        proxy
+        last
     } else {
-        routes.push(json!({ "handle": [proxy] }));
+        routes.push(json!({ "handle": [last] }));
         json!({ "handler": "subroute", "routes": routes })
     };
     json!({
         "@id": route_id(&route.id),
-        "match": [{ "host": route.hosts }],
+        "match": [host_match(route)],
         "handle": [handle],
         "terminal": true
     })
+}
+
+/// `host` y, si la ruta los tiene, los prefijos de camino (sin quitarlos).
+fn host_match(route: &Route) -> Value {
+    let mut m = json!({ "host": route.hosts });
+    if !route.paths.is_empty() {
+        let paths: Vec<String> = route.paths.iter().map(|p| format!("{p}*")).collect();
+        m["path"] = json!(paths);
+    }
+    m
 }
 
 /// Ruta de errores de `sb`: la petición sin marca va por HTTPS al primer
@@ -180,17 +213,15 @@ fn peers_route_json(route: &Route, peers: &[Peer]) -> Value {
     json!({
         "@id": extra_id(&route.id, "peers"),
         "match": [
-            {
-                "host": route.hosts,
+            with(host_match(route), json!({
                 "not": not_marked(),
                 "expression": "{http.error.status_code} == 503"
-            },
-            {
-                "host": route.hosts,
+            })),
+            with(host_match(route), json!({
                 "not": not_marked(),
                 "method": ["GET", "HEAD"],
                 "expression": "{http.error.status_code} in [502, 504]"
-            }
+            }))
         ],
         "handle": [{
             "handler": "reverse_proxy",
@@ -207,6 +238,14 @@ fn peers_route_json(route: &Route, peers: &[Peer]) -> Value {
         }],
         "terminal": true
     })
+}
+
+/// `base` con las claves de `more` añadidas.
+fn with(mut base: Value, more: Value) -> Value {
+    if let (Some(b), Value::Object(m)) = (base.as_object_mut(), more) {
+        b.extend(m);
+    }
+    base
 }
 
 /// Reto HTTP-01 que este nodo no conoce (los suyos los responde Caddy antes
@@ -246,13 +285,20 @@ fn acme_route_json(route: &Route, peers: &[Peer]) -> Value {
     })
 }
 
-/// Certificados de estos hosts solo por HTTP-01: un reto TLS-ALPN que cae
-/// en el otro nodo no se puede reenviar.
+/// Política TLS de los hosts. Con `tls: internal`, la CA interna de Caddy.
+/// Si no, con compañeros, solo HTTP-01: un reto TLS-ALPN que cae en el otro
+/// nodo no se puede reenviar.
 fn tls_policy_json(route: &Route) -> Value {
+    let issuer = match route.tls {
+        Tls::Internal => json!({ "module": "internal" }),
+        Tls::Acme => {
+            json!({ "module": "acme", "challenges": { "tls-alpn": { "disabled": true } } })
+        }
+    };
     json!({
         "@id": extra_id(&route.id, "tls"),
         "subjects": route.hosts,
-        "issuers": [{ "module": "acme", "challenges": { "tls-alpn": { "disabled": true } } }]
+        "issuers": [issuer]
     })
 }
 
@@ -410,48 +456,90 @@ async fn resolve(peers: &[Peer]) -> Result<Vec<IpAddr>, String> {
     Ok(ips)
 }
 
-/// Crea o sustituye la ruta y, con compañeros, sus objetos extra (antes que
-/// la ruta, para que no haya un momento con salud y sin a dónde ir); sin
-/// compañeros quita los que hubiera.
+/// Los objetos extra que lleva la ruta, en el orden de `EXTRAS`; `None` los
+/// que no lleva (se borran si estaban).
+fn extras(route: &Route, peers: &[Peer]) -> [Option<Value>; 3] {
+    let with_peers = !peers.is_empty();
+    [
+        with_peers.then(|| peers_route_json(route, peers)),
+        with_peers.then(|| acme_route_json(route, peers)),
+        (with_peers || route.tls == Tls::Internal).then(|| tls_policy_json(route)),
+    ]
+}
+
+/// Crea o sustituye la ruta y sus objetos extra (antes que la ruta, para que
+/// no haya un momento con salud y sin a dónde ir); quita los que ya no lleva.
+/// Una ruta con caminos va delante de todas, para ganar a las de solo nombre.
 pub async fn upsert_route(route: &Route) -> Result<(), String> {
     let client = http(Duration::from_secs(10))?;
     let peers = route.peers()?;
-    let mut ips = Vec::new();
-    if peers.is_empty() {
-        for (suffix, _, _) in EXTRAS {
-            delete(&client, &extra_id(&route.id, suffix)).await?;
-        }
+    let ips = if peers.is_empty() {
+        Vec::new()
     } else {
-        ips = resolve(&peers).await?;
-        let bodies = [
-            peers_route_json(route, &peers),
-            acme_route_json(route, &peers),
-            tls_policy_json(route),
-        ];
-        for ((suffix, list, front), body) in EXTRAS.into_iter().zip(bodies) {
-            ensure_path(&client, list).await?;
-            upsert(&client, &extra_id(&route.id, suffix), &body, list, front).await?;
+        resolve(&peers).await?
+    };
+    for ((suffix, list, front), body) in EXTRAS.into_iter().zip(extras(route, &peers)) {
+        let id = extra_id(&route.id, suffix);
+        match body {
+            Some(body) => {
+                ensure_path(&client, list).await?;
+                upsert(&client, &id, &body, list, front).await?;
+            }
+            None => delete(&client, &id).await?,
         }
     }
     let routes = format!("apps/http/servers/{SERVER}/routes");
-    upsert(
-        &client,
-        &route_id(&route.id),
-        &route_json(route, &ips),
-        &routes,
-        false,
-    )
-    .await
+    let id = route_id(&route.id);
+    let body = route_json(route, &ips);
+    if route.paths.is_empty() {
+        return upsert(&client, &id, &body, &routes, false).await;
+    }
+    // PATCH la dejaría donde estuviera: se quita y se pone delante.
+    // ponytail: entre los dos pasos (milisegundos) la petición cae en la ruta
+    // de solo nombre del mismo host, si la hay.
+    delete(&client, &id).await?;
+    upsert(&client, &id, &body, &routes, true).await
 }
 
-/// Borra la ruta y sus objetos extra. Que no existan no es un error.
+/// Borra la ruta y sus objetos extra y, si `id` es una app (sin `.`), las
+/// demás rutas de esa app (`<id>.<nombre>`). Que no existan no es un error.
 pub async fn delete_route(id: &str) -> Result<(), String> {
     let client = http(Duration::from_secs(10))?;
-    delete(&client, &route_id(id)).await?;
-    for (suffix, _, _) in EXTRAS {
-        delete(&client, &extra_id(id, suffix)).await?;
+    let mut ids = vec![id.to_string()];
+    if !id.contains('.') {
+        ids.extend(sub_routes(&client, id).await?);
+    }
+    for id in ids {
+        delete(&client, &route_id(&id)).await?;
+        for (suffix, _, _) in EXTRAS {
+            delete(&client, &extra_id(&id, suffix)).await?;
+        }
     }
     Ok(())
+}
+
+/// Ids de las rutas `<app>.<nombre>` que hay en Caddy.
+async fn sub_routes(client: &reqwest::Client, app: &str) -> Result<Vec<String>, String> {
+    let resp = client
+        .get(format!("{ADMIN}/config/apps/http/servers/{SERVER}/routes"))
+        .send()
+        .await
+        .map_err(admin_error)?;
+    let routes: Value = serde_json::from_str(&check(resp).await?).unwrap_or(Value::Null);
+    Ok(sub_route_ids(&routes, app))
+}
+
+fn sub_route_ids(routes: &Value, app: &str) -> Vec<String> {
+    let prefix = format!("{}.", route_id(app));
+    routes
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|r| r["@id"].as_str()?.strip_prefix("sbapp-"))
+        .filter(|id| format!("sbapp-{id}").starts_with(&prefix))
+        .filter(|id| !EXTRA_SUFFIXES.iter().any(|s| id.ends_with(s)))
+        .map(str::to_string)
+        .collect()
 }
 
 /// Procesos escuchando en :80 y :443 según `ss -ltnpH`. "unknown" si `ss`
@@ -727,6 +815,117 @@ mod tests {
         let t = tls_policy_json(&r);
         assert_eq!(t["subjects"], json!(["ejemplo.com", "www.ejemplo.com"]));
         assert_eq!(t["issuers"][0]["challenges"]["tls-alpn"]["disabled"], true);
+    }
+
+    fn v3(extra: Value) -> Route {
+        let mut v = json!({
+            "id": "a.api",
+            "hosts": ["api.ejemplo.com"],
+            "upstreams": [{ "dial": "127.0.0.1:20001" }],
+        });
+        v.as_object_mut()
+            .unwrap()
+            .extend(extra.as_object().unwrap().clone());
+        route(v)
+    }
+
+    #[test]
+    fn without_v3_fields_nothing_changes() {
+        let r = route_json(&v3(json!({})), &[]);
+        assert_eq!(
+            r,
+            json!({
+                "@id": "sbapp-a.api",
+                "match": [{ "host": ["api.ejemplo.com"] }],
+                "handle": [{ "handler": "reverse_proxy", "upstreams": [{ "dial": "127.0.0.1:20001" }] }],
+                "terminal": true
+            })
+        );
+        assert_eq!(extras(&v3(json!({})), &[]), [None, None, None]);
+    }
+
+    #[test]
+    fn paths_match_prefix() {
+        let r = route_json(
+            &v3(json!({ "paths": ["/agents/me/", "/heartbeats/ping/"] })),
+            &[],
+        );
+        assert_eq!(
+            r["match"],
+            json!([{ "host": ["api.ejemplo.com"], "path": ["/agents/me/*", "/heartbeats/ping/*"] }])
+        );
+        // Sin `rewrite`: el prefijo llega al upstream.
+        assert_eq!(r["handle"][0]["handler"], "reverse_proxy");
+        let mut p = with_peers();
+        p.paths = vec!["/x/".into()];
+        let e = peers_route_json(&p, &p.peers().unwrap());
+        assert_eq!(e["match"][0]["path"], json!(["/x/*"]));
+        assert_eq!(e["match"][1]["path"], json!(["/x/*"]));
+        assert_eq!(e["match"][1]["method"], json!(["GET", "HEAD"]));
+    }
+
+    #[test]
+    fn allow_ips_go_first() {
+        let r = route_json(&v3(json!({ "allow_ips": ["100.64.0.0/10"] })), &[]);
+        let routes = &r["handle"][0]["routes"];
+        assert_eq!(
+            routes[0]["match"][0]["not"][0]["remote_ip"]["ranges"],
+            json!(["100.64.0.0/10"])
+        );
+        assert_eq!(routes[0]["handle"][0]["status_code"], 403);
+        assert_eq!(routes[1]["handle"][0]["handler"], "reverse_proxy");
+    }
+
+    #[test]
+    fn redirect_to_has_no_upstream() {
+        let r = route_json(
+            &route(json!({
+                "id": "a.www",
+                "hosts": ["www.ejemplo.com"],
+                "upstreams": [],
+                "redirect_to": "ejemplo.com",
+            })),
+            &[],
+        );
+        let h = &r["handle"][0];
+        assert_eq!(h["status_code"], 301);
+        assert_eq!(
+            h["headers"]["Location"],
+            json!(["https://ejemplo.com{http.request.uri}"])
+        );
+    }
+
+    #[test]
+    fn h2c_upstream() {
+        let r = route_json(&v3(json!({ "upstream_protocol": "h2c" })), &[]);
+        let p = &r["handle"][0];
+        assert_eq!(p["transport"]["versions"], json!(["h2c", "2"]));
+        assert_eq!(p["flush_interval"], -1);
+    }
+
+    #[test]
+    fn internal_tls() {
+        let r = v3(json!({ "tls": "internal" }));
+        let [peers, acme, tls] = extras(&r, &[]);
+        assert!(peers.is_none() && acme.is_none());
+        let tls = tls.unwrap();
+        assert_eq!(tls["@id"], "sbapp-a.api-tls");
+        assert_eq!(tls["subjects"], json!(["api.ejemplo.com"]));
+        assert_eq!(tls["issuers"], json!([{ "module": "internal" }]));
+    }
+
+    #[test]
+    fn finds_sub_routes() {
+        let routes = json!([
+            { "@id": "sbapp-a" },
+            { "@id": "sbapp-a.api" },
+            { "@id": "sbapp-a.www" },
+            { "@id": "sbapp-ab.api" },
+            { "@id": "homepage" },
+            {}
+        ]);
+        assert_eq!(sub_route_ids(&routes, "a"), vec!["a.api", "a.www"]);
+        assert!(sub_route_ids(&Value::Null, "a").is_empty());
     }
 
     #[test]
