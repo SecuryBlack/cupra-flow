@@ -491,14 +491,36 @@ pub async fn upsert_route(route: &Route) -> Result<(), String> {
     let routes = format!("apps/http/servers/{SERVER}/routes");
     let id = route_id(&route.id);
     let body = route_json(route, &ips);
-    if route.paths.is_empty() {
-        return upsert(&client, &id, &body, &routes, false).await;
+    // Una ruta con caminos va delante; una que los pierde, al final, para no
+    // tapar a las de camino del mismo host. PATCH la dejaría donde estuviera,
+    // así que en esos casos se quita y se vuelve a poner.
+    // ponytail: entre los dos pasos (milisegundos) la petición cae en otra
+    // ruta del mismo host, si la hay.
+    let front = !route.paths.is_empty();
+    if front || has_paths(&client, &id).await? {
+        delete(&client, &id).await?;
     }
-    // PATCH la dejaría donde estuviera: se quita y se pone delante.
-    // ponytail: entre los dos pasos (milisegundos) la petición cae en la ruta
-    // de solo nombre del mismo host, si la hay.
-    delete(&client, &id).await?;
-    upsert(&client, &id, &body, &routes, true).await
+    upsert(&client, &id, &body, &routes, front).await
+}
+
+/// Si la ruta que hay ahora en Caddy con ese `@id` casa por camino.
+async fn has_paths(client: &reqwest::Client, id: &str) -> Result<bool, String> {
+    let resp = client
+        .get(format!("{ADMIN}/id/{id}"))
+        .send()
+        .await
+        .map_err(admin_error)?;
+    if !resp.status().is_success() {
+        return Ok(false);
+    }
+    let r: Value = serde_json::from_str(&resp.text().await.unwrap_or_default()).unwrap_or_default();
+    Ok(matches_path(&r))
+}
+
+fn matches_path(route: &Value) -> bool {
+    route["match"]
+        .as_array()
+        .is_some_and(|m| m.iter().any(|set| set.get("path").is_some()))
 }
 
 /// Borra la ruta y sus objetos extra y, si `id` es una app (sin `.`), las
@@ -912,6 +934,15 @@ mod tests {
         assert_eq!(tls["@id"], "sbapp-a.api-tls");
         assert_eq!(tls["subjects"], json!(["api.ejemplo.com"]));
         assert_eq!(tls["issuers"], json!([{ "module": "internal" }]));
+    }
+
+    #[test]
+    fn detects_path_routes() {
+        let with = route_json(&v3(json!({ "paths": ["/a/"] })), &[]);
+        let without = route_json(&v3(json!({})), &[]);
+        assert!(matches_path(&with));
+        assert!(!matches_path(&without));
+        assert!(!matches_path(&Value::Null));
     }
 
     #[test]

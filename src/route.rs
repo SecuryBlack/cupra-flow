@@ -118,8 +118,19 @@ fn valid_cidr(s: &str) -> bool {
     }
 }
 
+/// Camino literal: sin espacios ni control, y sin llaves, que Caddy leería
+/// como marcadores (`{env.X}`, `{http.…}`).
+fn plain_path(p: &str) -> bool {
+    p.starts_with('/')
+        && p.len() <= 256
+        && !p
+            .bytes()
+            .any(|b| b <= b' ' || b == 0x7f || b == b'{' || b == b'}')
+}
+
+/// Prefijo de `paths`: además, sin `*` (el comodín lo pone CupraFlow).
 fn valid_path(p: &str) -> bool {
-    p.starts_with('/') && p.len() <= 256 && !p.bytes().any(|b| b <= b' ' || b == 0x7f || b == b'*')
+    plain_path(p) && !p.contains('*')
 }
 
 fn valid_host(h: &str) -> bool {
@@ -234,7 +245,7 @@ impl Route {
             }
         }
         if let Some(h) = &self.health {
-            if !h.path.starts_with('/') || h.path.bytes().any(|b| b <= b' ' || b == 0x7f) {
+            if !plain_path(&h.path) {
                 return Err(format!("invalid health path: {:?}", h.path));
             }
             if !(1..=3600).contains(&h.interval_secs) {
@@ -395,6 +406,8 @@ mod tests {
             ("paths", json!(["agents"])),
             ("paths", json!(["/a*"])),
             ("paths", json!(["/a b"])),
+            ("paths", json!(["/{env.HOME}/"])),
+            ("paths", json!(["/a}"])),
             ("paths", json!(vec!["/a"; 11])),
             ("allow_ips", json!(["100.64.0.0/33"])),
             ("allow_ips", json!(["::/129"])),
@@ -447,6 +460,7 @@ mod tests {
             ("peers", json!(vec!["1.1.1.1"; 11])),
             ("health", json!({ "path": "health" })),
             ("health", json!({ "path": "/a b" })),
+            ("health", json!({ "path": "/{http.request.host}" })),
             ("health", json!({ "path": "/", "interval_secs": 0 })),
         ];
         for (field, value) in cases {
