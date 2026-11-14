@@ -7,11 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [0.3.0] - Unreleased
+## [0.3.0] - 2026-11-14
 
 ### Added
 - **Peers** (contract in `sb-wiki/Tecnica/CupraFlow v2 - contrato.md`): `route_set` takes `peers`, the app's other servers. With peers, the route checks the local container (active check on `health.path`, plus passive), and when it is down the request goes over HTTPS to the first healthy peer, with the domain as SNI and Host. Forwarded requests carry `X-Sb-Peer: 1` and are only served locally, so there are no loops. A peer's `X-Forwarded-For` is trusted only from the peers' IPs.
 - **Certificates with peers**: each server gets its own certificate by HTTP-01. A challenge this server does not know is forwarded to the peers on port 80; TLS-ALPN is off for those domains.
+
+- **Only what is safe to repeat goes to a peer**: a request that never reached the local container (503, no healthy upstream) is forwarded with any method and its body intact; after a failed attempt (502/504) only GET and HEAD are forwarded, so a POST or DELETE the app may have processed is never run twice.
+
+### Fixed
+- **Caddy admin API**: a new connection per request, since every config change restarts the admin endpoint and dropped the reused connection.
 
 Routes without `peers` produce exactly the same Caddy config as 0.2.
 
