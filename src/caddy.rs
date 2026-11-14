@@ -285,8 +285,8 @@ fn acme_route_json(route: &Route, peers: &[Peer]) -> Value {
     })
 }
 
-/// Política TLS de los hosts. Con `tls: internal`, la CA interna de Caddy.
-/// Si no, con compañeros, solo HTTP-01: un reto TLS-ALPN que cae en el otro
+/// Política TLS de los hosts. Con `tls: internal` (nunca con compañeros), la
+/// CA interna de Caddy. Si no, con compañeros, solo HTTP-01: un reto TLS-ALPN que cae en el otro
 /// nodo no se puede reenviar.
 fn tls_policy_json(route: &Route) -> Value {
     let issuer = match route.tls {

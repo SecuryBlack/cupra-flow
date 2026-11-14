@@ -257,6 +257,11 @@ impl Route {
         if !self.allow_ips.is_empty() && !self.peers.is_empty() {
             return Err("allow_ips and peers cannot go together".into());
         }
+        // El reenvío verifica el certificado del compañero contra el dominio:
+        // uno de la CA interna no pasaría.
+        if self.tls == Tls::Internal && !self.peers.is_empty() {
+            return Err("tls internal and peers cannot go together".into());
+        }
         if !self.policy.is_null() {
             tracing::warn!(id = %self.id, "route policy ignored: local first, then peers");
         }
@@ -413,6 +418,10 @@ mod tests {
         v["allow_ips"] = json!(["100.64.0.0/10"]);
         v["peers"] = json!(["203.0.113.7"]);
         assert!(route(v).validate().is_err(), "allow_ips + peers");
+        let mut v = ok();
+        v["tls"] = json!("internal");
+        v["peers"] = json!(["203.0.113.7"]);
+        assert!(route(v).validate().is_err(), "tls internal + peers");
     }
 
     #[test]
