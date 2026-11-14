@@ -165,9 +165,13 @@ pub fn route_json(route: &Route, peer_ips: &[IpAddr]) -> Value {
     })
 }
 
-/// Ruta de errores de `sb`: si el local falla (502/503/504, también «sin
-/// upstreams sanos»), la petición sin marca va por HTTPS al primer
-/// compañero que conteste, con el dominio como SNI y Host y la marca puesta.
+/// Ruta de errores de `sb`: la petición sin marca va por HTTPS al primer
+/// compañero que conteste, con el dominio como SNI y Host y la marca puesta,
+/// solo si es seguro repetirla allí:
+/// - 503 (no había upstream local sano): no se intentó, así que llega
+///   intacta, con su cuerpo, y la app no la vio. Cualquier método.
+/// - 502/504 (se intentó el local y falló): Go ya cerró el cuerpo y la app
+///   quizá la procesó. Solo GET y HEAD.
 fn peers_route_json(route: &Route, peers: &[Peer]) -> Value {
     let upstreams: Vec<Value> = peers
         .iter()
@@ -175,17 +179,30 @@ fn peers_route_json(route: &Route, peers: &[Peer]) -> Value {
         .collect();
     json!({
         "@id": extra_id(&route.id, "peers"),
-        "match": [{
-            "host": route.hosts,
-            "not": not_marked(),
-            "expression": "{http.error.status_code} >= 502"
-        }],
+        "match": [
+            {
+                "host": route.hosts,
+                "not": not_marked(),
+                "expression": "{http.error.status_code} == 503"
+            },
+            {
+                "host": route.hosts,
+                "not": not_marked(),
+                "method": ["GET", "HEAD"],
+                "expression": "{http.error.status_code} in [502, 504]"
+            }
+        ],
         "handle": [{
             "handler": "reverse_proxy",
             "upstreams": upstreams,
-            "transport": { "protocol": "http", "tls": { "server_name": "{http.request.host}" } },
+            "transport": {
+                "protocol": "http",
+                "tls": { "server_name": "{http.request.host}" },
+                "dial_timeout": "2s"
+            },
             "headers": { "request": { "set": { MARKER: ["1"] } } },
-            "load_balancing": { "selection_policy": { "policy": "first" }, "try_duration": "3s" },
+            // Más que `dial_timeout`, para que dé tiempo a probar el siguiente.
+            "load_balancing": { "selection_policy": { "policy": "first" }, "try_duration": "5s" },
             "health_checks": { "passive": { "fail_duration": "10s" } }
         }],
         "terminal": true
@@ -203,8 +220,9 @@ fn acme_handler(peers: &[Peer]) -> Value {
     let mut proxy = json!({
         "handler": "reverse_proxy",
         "upstreams": upstreams,
+        "transport": { "protocol": "http", "dial_timeout": "2s" },
         "headers": { "request": { "set": { MARKER: ["1"] } } },
-        "load_balancing": { "selection_policy": { "policy": "first" }, "try_duration": "3s" }
+        "load_balancing": { "selection_policy": { "policy": "first" }, "try_duration": "5s" }
     });
     if peers.len() > 1 {
         proxy["handle_response"] = json!([{
@@ -356,7 +374,20 @@ async fn ensure_path(client: &reqwest::Client, path: &str) -> Result<(), String>
                 .send()
                 .await
                 .map_err(admin_error)?;
-            return check(resp).await.map(|_| ());
+            if resp.status().is_success() {
+                return Ok(());
+            }
+            // Otro `route_set` a la vez puede haberlo creado entre el GET y el PUT.
+            let err = check(resp).await.unwrap_err();
+            let again = client
+                .get(format!("{ADMIN}/config/{prefix}"))
+                .send()
+                .await
+                .map_err(admin_error)?;
+            return match check(again).await {
+                Ok(t) if t.trim() != "null" => Ok(()),
+                _ => Err(err),
+            };
         }
     }
     Ok(())
@@ -657,6 +688,16 @@ mod tests {
         let e = peers_route_json(&r, &peers);
         assert_eq!(e["@id"], "sbapp-x-peers");
         assert_eq!(e["match"][0]["not"][0]["header"]["X-Sb-Peer"], json!(["1"]));
+        assert_eq!(
+            e["match"][0]["expression"],
+            "{http.error.status_code} == 503"
+        );
+        assert!(e["match"][0].get("method").is_none());
+        assert_eq!(e["match"][1]["method"], json!(["GET", "HEAD"]));
+        assert_eq!(
+            e["match"][1]["expression"],
+            "{http.error.status_code} in [502, 504]"
+        );
         let p = &e["handle"][0];
         assert_eq!(
             p["upstreams"],

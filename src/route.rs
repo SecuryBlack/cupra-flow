@@ -70,6 +70,9 @@ impl Peer {
     pub fn parse(s: &str) -> Result<Peer, String> {
         let bad = || format!("invalid peer: {s:?}");
         if let Ok(a) = s.parse::<SocketAddr>() {
+            if a.port() == 0 {
+                return Err(bad());
+            }
             return Ok(Peer::from_ip(a.ip(), a.port()));
         }
         let unbracketed = s
@@ -226,6 +229,8 @@ mod tests {
             "",
             "a b",
             "x.com:0",
+            "1.2.3.4:0",
+            "[::1]:0",
             "x.com:99999",
             "x.com:",
             "http://x.com",
