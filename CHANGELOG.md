@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.0] - Unreleased
+
+### Added
+
+- **Route options** for SecuryBlack's own services. All are optional, and a route without them produces exactly the same Caddy config as 0.3.
+  - `paths`: match only these path prefixes on the hosts, without stripping them. Routes with paths go before host-only routes, so they win.
+  - `allow_ips`: IPs or CIDR ranges allowed in, checked against the connecting socket's IP, never `X-Forwarded-For`. Everyone else gets a 403 and never reaches the app. Cannot be combined with `peers`.
+  - `redirect_to`: a route with no upstream that answers 301 to another host, keeping the path and query.
+  - `tls: "internal"`: certificates from Caddy's internal CA instead of ACME, for names behind Cloudflare in "Full" mode or names that are not public. Cannot be combined with `peers`, whose forwarding checks the peer's certificate against the domain.
+  - `upstream_protocol: "h2c"`: HTTP/2 without TLS to the app (gRPC), flushed immediately and with no time limit on long streams.
+- **Several routes per app**: a route id can be `<app>.<name>`. `route_remove` of `<app>` also removes its `<app>.<name>` routes. Ids ending in `-peers`, `-acme` or `-tls` are refused, since those name each route's extra objects.
+
 ## [0.3.0] - 2026-11-14
 
 ### Added
