@@ -696,12 +696,305 @@ pub async fn install() -> Result<Value, String> {
     status().await
 }
 
+/// Inventario para el panel (`route_list`): las rutas de SB tal como están en
+/// Caddy y los certificados que guarda, con su caducidad. Solo lee.
+pub async fn route_list() -> Result<Value, String> {
+    let caddy = state().await;
+    if caddy != "running" {
+        return Ok(json!({ "caddy": caddy, "routes": [], "certificates": [] }));
+    }
+    let client = http(Duration::from_secs(10))?;
+    let resp = client
+        .get(format!("{ADMIN}/config/apps"))
+        .send()
+        .await
+        .map_err(admin_error)?;
+    let apps: Value = serde_json::from_str(&check(resp).await?).unwrap_or(Value::Null);
+    let image = docker(["inspect", "-f", "{{.Config.Image}}", CONTAINER])
+        .await
+        .unwrap_or_default();
+    // Sin certificados (o sin `find` en la imagen) la lista sale vacía, no falla.
+    let certs = docker([
+        "exec",
+        CONTAINER,
+        "sh",
+        "-c",
+        "find /data/caddy/certificates -name '*.crt' | while read f; do echo \"@@ $f\"; cat \"$f\"; done",
+    ])
+    .await
+    .unwrap_or_default();
+    Ok(json!({
+        "caddy": caddy,
+        "image": image,
+        "routes": summarize(&apps),
+        "certificates": parse_certs(&certs),
+    }))
+}
+
+/// Primer valor de `v` (en profundidad) que cumple `pred`.
+fn find<'a>(v: &'a Value, pred: &dyn Fn(&Value) -> bool) -> Option<&'a Value> {
+    if pred(v) {
+        return Some(v);
+    }
+    match v {
+        Value::Array(a) => a.iter().find_map(|x| find(x, pred)),
+        Value::Object(o) => o.values().find_map(|x| find(x, pred)),
+        _ => None,
+    }
+}
+
+fn by_id<'a>(list: &'a Value, id: &str) -> Option<&'a Value> {
+    list.as_array()?.iter().find(|r| r["@id"] == id)
+}
+
+fn dials(proxy: Option<&Value>) -> Vec<Value> {
+    proxy
+        .and_then(|p| p["upstreams"].as_array())
+        .into_iter()
+        .flatten()
+        .map(|u| u["dial"].clone())
+        .collect()
+}
+
+/// Deshace `route_json` y sus extras: una entrada por ruta de SB.
+fn summarize(apps: &Value) -> Vec<Value> {
+    let sb = &apps["http"]["servers"][SERVER];
+    let policies = &apps["tls"]["automation"]["policies"];
+    sb["routes"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|r| {
+            let id = r["@id"].as_str()?.strip_prefix("sbapp-")?;
+            if EXTRA_SUFFIXES.iter().any(|s| id.ends_with(s)) {
+                return None;
+            }
+            let m = &r["match"][0];
+            let proxy = find(r, &|v: &Value| v["handler"] == "reverse_proxy");
+            let redirect_to = find(r, &|v: &Value| {
+                v["handler"] == "static_response" && v["status_code"] == 301
+            })
+            .and_then(|h| {
+                let loc = h["headers"]["Location"][0].as_str()?;
+                Some(
+                    loc.trim_start_matches("https://")
+                        .trim_end_matches("{http.request.uri}")
+                        .to_string(),
+                )
+            });
+            // Subruta de redirección: su `match` de hosts y un 308 en `handle`.
+            let redirect_hosts = find(&r["handle"], &|v: &Value| {
+                v["match"][0]["host"].is_array() && v["handle"][0]["status_code"] == 308
+            })
+            .map(|v| v["match"][0]["host"].clone())
+            .unwrap_or(json!([]));
+            let allow_ips = find(r, &|v: &Value| {
+                v["not"][0]["remote_ip"]["ranges"].is_array()
+            })
+            .map(|v| v["not"][0]["remote_ip"]["ranges"].clone())
+            .unwrap_or(json!([]));
+            let h2c = proxy.is_some_and(|p| {
+                p["transport"]["versions"]
+                    .as_array()
+                    .is_some_and(|v| v.contains(&json!("h2c")))
+            });
+            let paths: Vec<Value> = m["path"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .filter_map(|p| Some(json!(p.as_str()?.trim_end_matches('*'))))
+                .collect();
+            let tls = by_id(policies, &extra_id(id, "tls"))
+                .and_then(|p| p["issuers"][0]["module"].as_str())
+                .unwrap_or("acme");
+            let peers =
+                by_id(&sb["errors"]["routes"], &extra_id(id, "peers")).map(|p| &p["handle"][0]);
+            Some(json!({
+                "id": id,
+                "hosts": m["host"],
+                "paths": paths,
+                "upstreams": dials(proxy),
+                "upstream_protocol": if h2c { "h2c" } else { "http" },
+                "redirect_to": redirect_to,
+                "redirect_hosts": redirect_hosts,
+                "allow_ips": allow_ips,
+                "tls": tls,
+                "peers": dials(peers),
+            }))
+        })
+        .collect()
+}
+
+/// Salida de `find … cat` en el contenedor: `@@ <ruta>` y el PEM debajo.
+/// La carpeta de encima de la del host dice quién lo emitió.
+fn parse_certs(out: &str) -> Vec<Value> {
+    out.split("@@ ")
+        .skip(1)
+        .filter_map(|block| {
+            let (path, pem) = block.split_once('\n')?;
+            let mut parts = path.trim().rsplit('/');
+            let host = parts.next()?.strip_suffix(".crt")?;
+            parts.next();
+            let dir = parts.next()?;
+            let issuer = if dir == "local" {
+                "internal"
+            } else if dir.contains("letsencrypt") {
+                "letsencrypt"
+            } else if dir.contains("zerossl") {
+                "zerossl"
+            } else {
+                dir
+            };
+            Some(json!({ "host": host, "issuer": issuer, "not_after": pem_not_after(pem) }))
+        })
+        .collect()
+}
+
+fn pem_not_after(pem: &str) -> Option<String> {
+    use base64::Engine;
+    let b64: String = pem
+        .lines()
+        .skip_while(|l| !l.starts_with("-----BEGIN CERTIFICATE"))
+        .skip(1)
+        .take_while(|l| !l.starts_with("-----END"))
+        .map(str::trim)
+        .collect();
+    not_after(&base64::engine::general_purpose::STANDARD.decode(b64).ok()?)
+}
+
+/// Un elemento DER: (etiqueta, contenido, lo que queda detrás).
+fn tlv(b: &[u8]) -> Option<(u8, &[u8], &[u8])> {
+    let tag = *b.first()?;
+    let first = *b.get(1)? as usize;
+    let (len, start) = if first < 0x80 {
+        (first, 2)
+    } else {
+        let n = first & 0x7f;
+        if n == 0 || n > 4 {
+            return None;
+        }
+        let mut len = 0usize;
+        for i in 0..n {
+            len = (len << 8) | *b.get(2 + i)? as usize;
+        }
+        (len, 2 + n)
+    };
+    let end = start.checked_add(len)?;
+    Some((tag, b.get(start..end)?, b.get(end..)?))
+}
+
+/// `notAfter` de un certificado X.509 en DER, como `AAAA-MM-DDTHH:MM:SSZ`.
+/// Certificate → TBSCertificate → [versión], serie, algoritmo, emisor, validez.
+fn not_after(der: &[u8]) -> Option<String> {
+    let (_, cert, _) = tlv(der)?;
+    let (_, mut tbs, _) = tlv(cert)?;
+    let mut fields = Vec::new();
+    while fields.len() < 5 && !tbs.is_empty() {
+        let (tag, content, rest) = tlv(tbs)?;
+        fields.push((tag, content));
+        tbs = rest;
+    }
+    let skip = usize::from(fields.first()?.0 == 0xa0);
+    let (_, validity) = fields.get(skip + 3)?;
+    let (_, _, rest) = tlv(validity)?;
+    let (tag, t, _) = tlv(rest)?;
+    let t = std::str::from_utf8(t).ok()?;
+    let t = match tag {
+        // UTCTime: dos cifras de año, de 1950 a 2049.
+        0x17 => {
+            let century = if t.get(0..2)?.parse::<u32>().ok()? < 50 {
+                "20"
+            } else {
+                "19"
+            };
+            format!("{century}{t}")
+        }
+        0x18 => t.to_string(),
+        _ => return None,
+    };
+    let p = |a: usize, b: usize| t.get(a..b);
+    Some(format!(
+        "{}-{}-{}T{}:{}:{}Z",
+        p(0, 4)?,
+        p(4, 6)?,
+        p(6, 8)?,
+        p(8, 10)?,
+        p(10, 12)?,
+        p(12, 14)?
+    ))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
     fn route(v: Value) -> Route {
         serde_json::from_value(v).unwrap()
+    }
+
+    const TEST_PEM: &str = "-----BEGIN CERTIFICATE-----
+MIIBdjCCAR2gAwIBAgIUc7OMwXLLD819m9e6WxJcMd3ToHQwCgYIKoZIzj0EAwIw
+ETEPMA0GA1UEAwwGdC50ZXN0MB4XDTI2MTExNTE2MTA1NloXDTI3MDIxMzE2MTA1
+NlowETEPMA0GA1UEAwwGdC50ZXN0MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAE
+MWQmzUEnmcNfkMJc4vvp6qzra8NiM1ZsZuZ6qwh6UwJhE/ieYY06+2dE/hze5B2R
+l9mCzUC5ad6rOBRXv32ZeKNTMFEwHQYDVR0OBBYEFHCF3pEqrE1/c+QIKp8XDajH
+4miOMB8GA1UdIwQYMBaAFHCF3pEqrE1/c+QIKp8XDajH4miOMA8GA1UdEwEB/wQF
+MAMBAf8wCgYIKoZIzj0EAwIDRwAwRAIgfyGby6lz7tQNzYBp1pIhKCIMxfUvt2g+
+SfDYivBraM0CIH6nG508I6HKhwvYW3EuGaLU8WoODfUQkX5JRGHq+79k
+-----END CERTIFICATE-----
+";
+
+    #[test]
+    fn certificates_from_storage() {
+        let out = format!(
+            "@@ /data/caddy/certificates/acme-v02.api.letsencrypt.org-directory/t.test/t.test.crt\n{TEST_PEM}\
+             @@ /data/caddy/certificates/local/i.test/i.test.crt\nbasura\n"
+        );
+        assert_eq!(
+            parse_certs(&out),
+            vec![
+                json!({ "host": "t.test", "issuer": "letsencrypt", "not_after": "2027-02-13T16:10:56Z" }),
+                json!({ "host": "i.test", "issuer": "internal", "not_after": null }),
+            ]
+        );
+    }
+
+    #[test]
+    fn summarize_undoes_route_json() {
+        let r = route(json!({
+            "id": "aaaa.api",
+            "hosts": ["a.test", "www.a.test"],
+            "redirect_hosts": ["www.a.test"],
+            "paths": ["/v1/"],
+            "allow_ips": ["100.64.0.0/10"],
+            "tls": "internal",
+            "upstream_protocol": "h2c",
+            "upstreams": [{ "dial": "127.0.0.1:9000" }],
+        }));
+        let mut apps = json!({
+            "http": { "servers": { "sb": { "routes": [route_json(&r, &[])] } } },
+            "tls": { "automation": { "policies": [tls_policy_json(&r)] } }
+        });
+        let sum = summarize(&apps);
+        assert_eq!(sum.len(), 1);
+        assert_eq!(sum[0]["id"], "aaaa.api");
+        assert_eq!(sum[0]["hosts"], json!(["a.test", "www.a.test"]));
+        assert_eq!(sum[0]["paths"], json!(["/v1/"]));
+        assert_eq!(sum[0]["upstreams"], json!(["127.0.0.1:9000"]));
+        assert_eq!(sum[0]["upstream_protocol"], "h2c");
+        assert_eq!(sum[0]["redirect_hosts"], json!(["www.a.test"]));
+        assert_eq!(sum[0]["allow_ips"], json!(["100.64.0.0/10"]));
+        assert_eq!(sum[0]["tls"], "internal");
+        assert_eq!(sum[0]["redirect_to"], Value::Null);
+
+        let to = route(
+            json!({ "id": "bbbb", "hosts": ["b.test"], "upstreams": [], "redirect_to": "a.test" }),
+        );
+        apps["http"]["servers"]["sb"]["routes"] = json!([route_json(&to, &[])]);
+        let sum = summarize(&apps);
+        assert_eq!(sum[0]["redirect_to"], "a.test");
+        assert_eq!(sum[0]["upstreams"], json!([]));
+        assert_eq!(sum[0]["tls"], "acme");
     }
 
     #[test]
