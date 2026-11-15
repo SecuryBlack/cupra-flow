@@ -7,7 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [0.4.0] - Unreleased
+## [0.5.0] - 2026-11-15
+
+### Added
+
+- **`route_list`**: a read-only order for the panel's «Tráfico» section. It returns Caddy's state and image, every SecuryBlack route as it is live in Caddy (hosts, paths, upstreams, protocol, redirects, allowed IPs, TLS issuer and peers), and every certificate Caddy stores, with its issuer and expiry date. Certificates with no route left (old tests) show up too, so they can be cleaned up.
+
+## [0.4.0] - 2026-11-15
 
 ### Added
 

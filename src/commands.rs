@@ -1,5 +1,5 @@
 //! Órdenes de CupraFlow (contrato en `sb-wiki/Tecnica/CupraFlow v1 - contrato.md`):
-//! `proxy_install`, `proxy_status`, `route_set` y `route_remove`. Llegan por
+//! `proxy_install`, `proxy_status`, `route_set`, `route_remove` y `route_list`. Llegan por
 //! Nexus (intake firmado) o de CromoForge por el socket local, sin firma.
 
 use crate::{caddy, route::Route};
@@ -16,6 +16,7 @@ pub fn register(registry: &CommandRegistry) {
     registry.register("proxy_status", proxy_status);
     registry.register("route_set", route_set);
     registry.register("route_remove", route_remove);
+    registry.register("route_list", route_list);
 }
 
 fn outcome(result: Result<Value, String>) -> CommandOutcome {
@@ -27,6 +28,10 @@ fn outcome(result: Result<Value, String>) -> CommandOutcome {
 
 async fn proxy_install(_payload: Value, _p: ProgressSender) -> CommandOutcome {
     outcome(caddy::install().await)
+}
+
+async fn route_list(_payload: Value, _p: ProgressSender) -> CommandOutcome {
+    outcome(caddy::route_list().await)
 }
 
 async fn proxy_status(_payload: Value, _p: ProgressSender) -> CommandOutcome {
