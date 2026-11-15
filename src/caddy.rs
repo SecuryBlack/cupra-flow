@@ -331,7 +331,8 @@ pub async fn ensure_metrics() -> Result<(), String> {
         return Ok(());
     }
     let resp = client
-        .put(&url)
+        // POST crea o sustituye el objeto (PUT falla si ya existe, p. ej. `{}`).
+        .post(&url)
         .header("Content-Type", "application/json")
         .body(metrics_json().to_string())
         .send()

@@ -227,6 +227,13 @@ pub fn request(d: &HashMap<String, Counters>, start: u64, now: u64) -> ExportMet
     }
 }
 
+/// Cuándo arrancó el proceso de Caddy, para saber si se reinició.
+pub fn process_start(text: &str) -> Option<f64> {
+    text.lines()
+        .find_map(|l| l.strip_prefix("process_start_time_seconds "))
+        .and_then(|v| v.trim().parse().ok())
+}
+
 fn now_ns() -> u64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -238,6 +245,8 @@ fn now_ns() -> u64 {
 #[derive(Default)]
 pub struct State {
     last: Option<(u64, HashMap<String, Counters>)>,
+    /// `process_start_time_seconds` de Caddy en la última lectura.
+    started: Option<f64>,
     warned: bool,
 }
 
@@ -249,22 +258,29 @@ pub async fn tick(st: &mut State) {
     if let Err(e) = crate::caddy::ensure_metrics().await {
         tracing::debug!("metrics: cannot enable per-host metrics: {e}");
     }
-    let cur = match crate::caddy::scrape().await {
-        Ok(text) => parse(&text),
+    let (cur, started) = match crate::caddy::scrape().await {
+        Ok(text) => (parse(&text), process_start(&text)),
         Err(e) => {
             tracing::debug!("metrics: scrape failed: {e}");
             return;
         }
     };
     let now = now_ns();
-    let Some((start, prev)) = st.last.replace((now, cur.clone())) else {
+    let Some((start, mut prev)) = st.last.replace((now, cur.clone())) else {
+        st.started = started;
         return;
     };
+    // Caddy se reinició: todo lo que lleva cuenta desde cero, aunque un
+    // contador ya haya superado al de antes.
+    if started.is_some() && std::mem::replace(&mut st.started, started) != started {
+        prev.clear();
+    }
     let d = delta(&prev, &cur);
     if d.is_empty() {
         return;
     }
-    let sent = async {
+    // Con un plazo: un Nexus colgado no puede parar el bucle de `main`.
+    let sent = tokio::time::timeout(std::time::Duration::from_secs(10), async {
         let channel = tonic::transport::Channel::from_static(NEXUS)
             .connect()
             .await?;
@@ -272,8 +288,9 @@ pub async fn tick(st: &mut State) {
             .export(request(&d, start, now))
             .await?;
         Ok::<_, Box<dyn std::error::Error>>(())
-    }
-    .await;
+    })
+    .await
+    .unwrap_or_else(|_| Err("timed out after 10 s".into()));
     match sent {
         Ok(()) => st.warned = false,
         Err(e) if !st.warned => {
@@ -335,6 +352,15 @@ caddy_http_requests_total{handler="reverse_proxy",host="a.com",server="sb"} 8
             4,
             "counter went down: Caddy restarted"
         );
+    }
+
+    #[test]
+    fn reads_process_start() {
+        let text = "# TYPE process_start_time_seconds gauge
+process_start_time_seconds 1.79476e+09
+";
+        assert_eq!(process_start(text), Some(1.79476e9));
+        assert_eq!(process_start(SAMPLE), None);
     }
 
     #[test]
