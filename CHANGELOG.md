@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-11-15
+
+### Added
+
+- **Traffic per domain** for the panel. CupraFlow turns on Caddy's per-host metrics (`apps.http.metrics.per_host`, only for configured hosts), reads them every minute and sends what each domain did in that minute (requests, the latency histogram and responses by status class) over OTLP to the local Nexus agent, like OxiPulse does. The first reading after a start is only the baseline, and a Caddy restart is handled. Only the final handler of each request counts, so routes with paths or allowed IPs are not counted twice.
+
 ## [0.5.0] - 2026-11-15
 
 ### Added

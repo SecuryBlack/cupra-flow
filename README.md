@@ -26,6 +26,7 @@ Follow the agent-specific installation and configuration instructions below. Use
 
 - Installs and owns `sb-caddy` (Caddy 2.10 in Docker, admin API on `127.0.0.1:2019`).
 - Orders through the SecuryBlack panel: `proxy_install`, `proxy_status`, `route_set`, `route_remove`, `route_list`.
+- Traffic per domain every minute (requests, 4xx/5xx and latency) to the panel, through the local Nexus agent.
 - A local socket for CromoForge, so app deployments change their route through CupraFlow.
 
 Planned, not built: several upstreams per route, health checks, load balancing and forwarding between nodes.

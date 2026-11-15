@@ -19,7 +19,7 @@ pub const CONTAINER: &str = "sb-caddy";
 const IMAGE: &str = "caddy:2.10.0";
 const ADMIN: &str = "http://127.0.0.1:2019";
 /// Nombre del servidor HTTP de SB dentro de la config de Caddy.
-const SERVER: &str = "sb";
+pub const SERVER: &str = "sb";
 /// Servidor de :80 de CupraFlow, solo para reenviar retos ACME a los
 /// compañeros. Caddy le añade detrás sus redirecciones a HTTPS.
 const SERVER_HTTP: &str = "sb_http";
@@ -308,8 +308,49 @@ fn tls_policy_json(route: &Route) -> Value {
 fn initial_config() -> Value {
     json!({
         "admin": { "listen": "127.0.0.1:2019" },
-        "apps": { "http": { "servers": { SERVER: { "listen": [":443"], "routes": [] } } } }
+        "apps": { "http": {
+            "metrics": metrics_json(),
+            "servers": { SERVER: { "listen": [":443"], "routes": [] } }
+        } }
     })
+}
+
+/// Métricas de Caddy por dominio (solo los configurados: un `Host` inventado
+/// no crea series nuevas). Las lee `metrics.rs` en `/metrics`.
+fn metrics_json() -> Value {
+    json!({ "per_host": true })
+}
+
+/// Activa las métricas por dominio si aún no lo están (Caddy de 0.5.0 o
+/// anterior). Con `--resume` el cambio queda en la config autoguardada.
+pub async fn ensure_metrics() -> Result<(), String> {
+    let client = http(Duration::from_secs(5))?;
+    let url = format!("{ADMIN}/config/apps/http/metrics");
+    let cur = check(client.get(&url).send().await.map_err(admin_error)?).await?;
+    if serde_json::from_str::<Value>(&cur).ok().as_ref() == Some(&metrics_json()) {
+        return Ok(());
+    }
+    let resp = client
+        .put(&url)
+        .header("Content-Type", "application/json")
+        .body(metrics_json().to_string())
+        .send()
+        .await
+        .map_err(admin_error)?;
+    check(resp).await.map(|_| ())
+}
+
+/// Texto Prometheus de Caddy (`/metrics` de la API de administración).
+pub async fn scrape() -> Result<String, String> {
+    let client = http(Duration::from_secs(10))?;
+    check(
+        client
+            .get(format!("{ADMIN}/metrics"))
+            .send()
+            .await
+            .map_err(admin_error)?,
+    )
+    .await
 }
 
 fn admin_error(e: reqwest::Error) -> String {

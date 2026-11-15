@@ -6,6 +6,7 @@
 mod caddy;
 mod commands;
 mod config;
+mod metrics;
 mod route;
 
 use config::Config;
@@ -63,9 +64,15 @@ async fn run(mut shutdown: oneshot::Receiver<()>) {
     ));
 
     status_handle.set_state("running");
-    // El estado de Caddy se refresca cada minuto para `cupraflow status`/`top`.
+    // Cada minuto: el estado de Caddy para `cupraflow status`/`top` y, con
+    // Caddy en marcha, el tráfico por dominio hacia Nexus.
+    let mut traffic = metrics::State::default();
     loop {
-        status_handle.set_details(serde_json::json!({ "caddy": caddy::state().await }));
+        let caddy = caddy::state().await;
+        status_handle.set_details(serde_json::json!({ "caddy": caddy }));
+        if caddy == "running" {
+            metrics::tick(&mut traffic).await;
+        }
         tokio::select! {
             _ = tokio::time::sleep(std::time::Duration::from_secs(60)) => {}
             _ = &mut shutdown => {
