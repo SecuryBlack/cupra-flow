@@ -43,6 +43,18 @@ cupraflow top             # live TUI
 journalctl -fu cupraflow  # logs
 ```
 
+### Behind another proxy
+
+If another proxy (Traefik, nginx…) already owns ports 80 and 443, set this in `/etc/cupraflow/config.toml` **before** installing Caddy from the panel:
+
+```toml
+behind_proxy = "172.18.0.1:8090"
+```
+
+Then restart the agent (`systemctl restart cupraflow`): the config is read at start. Reinstalling keeps the line.
+
+Caddy then listens there in plain HTTP, trusting `X-Forwarded-*` from private networks (the front proxy), opens neither 80 nor 443 and gets no certificates: TLS is the front proxy's job. Point the front proxy's route for each domain at that address, keeping the `Host` header.
+
 ---
 
 ## 🌐 SecuryBlack Open Source Ecosystem

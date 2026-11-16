@@ -52,6 +52,11 @@ chmod 700 "$CONFIG_DIR"
 if [[ -z "$TOKEN" && -f "$CONFIG_FILE" ]]; then
   TOKEN="$(sed -n 's/^token *= *"\(.*\)"$/\1/p' "$CONFIG_FILE" | head -n1)"
 fi
+# Keep `behind_proxy` too: without it Caddy would want ports 80 and 443 again.
+BEHIND_LINE=""
+if [[ -f "$CONFIG_FILE" ]]; then
+  BEHIND_LINE="$(grep -E '^behind_proxy *=' "$CONFIG_FILE" | head -n1 || true)"
+fi
 if [[ -z "$TOKEN" ]]; then
   read -rsp "  Auth token: " TOKEN </dev/tty
   echo ""
@@ -63,6 +68,9 @@ cat > "$CONFIG_FILE" <<EOF
 # Do not share this file — it contains your auth token.
 token = "${TOKEN}"
 EOF
+if [[ -n "$BEHIND_LINE" ]]; then
+  echo "$BEHIND_LINE" >> "$CONFIG_FILE"
+fi
 chmod 600 "$CONFIG_FILE"
 
 sb_write_systemd_unit "cupraflow" "CupraFlow traffic agent (SecuryBlack)" "${INSTALL_DIR}/${BIN_NAME}" "$CONFIG_DIR"

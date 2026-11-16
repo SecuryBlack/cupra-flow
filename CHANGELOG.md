@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.7.0] - 2026-11-16
+
+### Added
+
+- **Behind another proxy** (`behind_proxy = "ip:port"` in `config.toml`). For servers where another proxy such as Traefik already owns ports 80 and 443: Caddy is installed listening in plain HTTP on that address, without opening 80 or 443 and without certificates, and the front proxy terminates TLS. Peer fallback still works (it goes out through the peer's 443); ACME challenge forwarding and per-route TLS policies are skipped. Set it before installing Caddy.
+
 ## [0.6.0] - 2026-11-15
 
 ### Added
