@@ -36,6 +36,10 @@ async fn run(mut shutdown: oneshot::Receiver<()>) {
         std::process::exit(1);
     });
     let _ = core_config::sync_version_field(&config_path, version);
+    if let Some(addr) = cfg.behind_proxy {
+        info!(%addr, "behind another proxy: Caddy serves plain HTTP there");
+    }
+    caddy::set_behind_proxy(cfg.behind_proxy);
 
     let status_handle = status::StatusHandle::new(AGENT_NAME, version);
     status::spawn_server(

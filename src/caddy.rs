@@ -26,6 +26,19 @@ const SERVER_HTTP: &str = "sb_http";
 /// Marca de lo reenviado entre compañeros: quien la recibe solo sirve en local.
 const MARKER: &str = "X-Sb-Peer";
 
+/// `behind_proxy` de la config: se fija una vez al arrancar.
+static BEHIND: std::sync::OnceLock<Option<std::net::SocketAddr>> = std::sync::OnceLock::new();
+
+pub fn set_behind_proxy(addr: Option<std::net::SocketAddr>) {
+    let _ = BEHIND.set(addr);
+}
+
+/// Detrás de otro proxy: Caddy en HTTP plano en esa dirección, sin :80, sin
+/// :443 y sin certificados.
+fn behind() -> Option<std::net::SocketAddr> {
+    BEHIND.get().copied().flatten()
+}
+
 async fn docker<I, S>(args: I) -> Result<String, String>
 where
     I: IntoIterator<Item = S>,
@@ -306,11 +319,27 @@ fn tls_policy_json(route: &Route) -> Value {
 /// HTTPS automático de Caddy añade solo el servidor de :80 (redirección y
 /// reto ACME HTTP-01) en cuanto aparece una ruta con `host`.
 fn initial_config() -> Value {
+    initial_config_for(behind())
+}
+
+/// Detrás de otro proxy, `sb` escucha en HTTP plano en `addr` y sin HTTPS
+/// automático, así que Caddy no abre el :80 ni pide certificados.
+// ponytail: solo vale en la instalación; cambiar `behind_proxy` con Caddy ya
+// montado pide tocar `sb` a mano (o borrar `sb-caddy` y su volumen).
+fn initial_config_for(addr: Option<std::net::SocketAddr>) -> Value {
+    let server = match addr {
+        Some(a) => json!({
+            "listen": [a.to_string()],
+            "automatic_https": { "disable": true },
+            "routes": []
+        }),
+        None => json!({ "listen": [":443"], "routes": [] }),
+    };
     json!({
         "admin": { "listen": "127.0.0.1:2019" },
         "apps": { "http": {
             "metrics": metrics_json(),
-            "servers": { SERVER: { "listen": [":443"], "routes": [] } }
+            "servers": { SERVER: server }
         } }
     })
 }
@@ -501,11 +530,17 @@ async fn resolve(peers: &[Peer]) -> Result<Vec<IpAddr>, String> {
 /// Los objetos extra que lleva la ruta, en el orden de `EXTRAS`; `None` los
 /// que no lleva (se borran si estaban).
 fn extras(route: &Route, peers: &[Peer]) -> [Option<Value>; 3] {
+    extras_for(route, peers, behind().is_some())
+}
+
+/// Detrás de otro proxy no hay :80 ni certificados: ni reenvío de retos
+/// ACME ni política TLS. El de los compañeros sí, que sale por su 443.
+fn extras_for(route: &Route, peers: &[Peer], behind: bool) -> [Option<Value>; 3] {
     let with_peers = !peers.is_empty();
     [
         with_peers.then(|| peers_route_json(route, peers)),
-        with_peers.then(|| acme_route_json(route, peers)),
-        (with_peers || route.tls == Tls::Internal).then(|| tls_policy_json(route)),
+        (with_peers && !behind).then(|| acme_route_json(route, peers)),
+        ((with_peers || route.tls == Tls::Internal) && !behind).then(|| tls_policy_json(route)),
     ]
 }
 
@@ -651,6 +686,10 @@ async fn listening_ports() -> Result<(Option<String>, Option<String>), String> {
 /// cuenta como libre (`null`).
 pub async fn status() -> Result<Value, String> {
     let caddy = state().await;
+    // Detrás de otro proxy el 80 y el 443 son suyos y no estorban.
+    if behind().is_some() {
+        return Ok(json!({ "caddy": caddy, "port80": null, "port443": null }));
+    }
     let (p80, p443) = listening_ports().await?;
     let ours = |p: Option<String>| p.filter(|name| !(caddy == "running" && name == "caddy"));
     Ok(json!({ "caddy": caddy, "port80": ours(p80), "port443": ours(p443) }))
@@ -700,7 +739,11 @@ pub async fn install() -> Result<Value, String> {
     match state().await {
         "running" => {}
         st => {
-            let (p80, p443) = listening_ports().await?;
+            let (p80, p443) = if behind().is_some() {
+                (None, None)
+            } else {
+                listening_ports().await?
+            };
             if p80.is_some() || p443.is_some() {
                 let busy: Vec<String> = [("80", p80), ("443", p443)]
                     .into_iter()
@@ -1316,6 +1359,28 @@ SfDYivBraM0CIH6nG508I6HKhwvYW3EuGaLU8WoODfUQkX5JRGHq+79k
             .as_array()
             .unwrap()
             .is_empty());
+    }
+
+    #[test]
+    fn behind_proxy_plain_http_no_certs() {
+        let sb = &initial_config_for(Some("172.18.0.1:8090".parse().unwrap()))["apps"]["http"]
+            ["servers"]["sb"];
+        assert_eq!(sb["listen"], json!(["172.18.0.1:8090"]));
+        assert_eq!(sb["automatic_https"]["disable"], true);
+        assert_eq!(
+            initial_config_for(None)["apps"]["http"]["servers"]["sb"]["listen"],
+            json!([":443"])
+        );
+
+        // Con compañeros: sí el reenvío por su 443; ni retos ACME (no hay :80) ni política TLS.
+        let r = with_peers();
+        let peers = r.peers().unwrap();
+        let [p, acme, tls] = extras_for(&r, &peers, true);
+        assert!(p.is_some() && acme.is_none() && tls.is_none());
+        let [p, acme, tls] = extras_for(&r, &peers, false);
+        assert!(p.is_some() && acme.is_some() && tls.is_some());
+        let [_, _, tls] = extras_for(&v3(json!({ "tls": "internal" })), &[], true);
+        assert!(tls.is_none());
     }
 
     #[test]
