@@ -322,15 +322,29 @@ fn initial_config() -> Value {
     initial_config_for(behind())
 }
 
+/// Redes privadas (las de `private_ranges` del Caddyfile).
+const PRIVATE_RANGES: [&str; 6] = [
+    "192.168.0.0/16",
+    "172.16.0.0/12",
+    "10.0.0.0/8",
+    "127.0.0.0/8",
+    "fd00::/8",
+    "::1/128",
+];
+
 /// Detrás de otro proxy, `sb` escucha en HTTP plano en `addr` y sin HTTPS
 /// automático, así que Caddy no abre el :80 ni pide certificados.
 // ponytail: solo vale en la instalación; cambiar `behind_proxy` con Caddy ya
 // montado pide tocar `sb` a mano (o borrar `sb-caddy` y su volumen).
 fn initial_config_for(addr: Option<std::net::SocketAddr>) -> Value {
     let server = match addr {
+        // Lo que llega ahí viene del proxy de delante: se respetan sus
+        // X-Forwarded-* (sobre todo `Proto: https`) si conecta desde una red privada.
         Some(a) => json!({
             "listen": [a.to_string()],
             "automatic_https": { "disable": true },
+            // `private_ranges` solo existe en el Caddyfile: en JSON van las redes.
+            "trusted_proxies": { "source": "static", "ranges": PRIVATE_RANGES },
             "routes": []
         }),
         None => json!({ "listen": [":443"], "routes": [] }),
@@ -891,7 +905,8 @@ fn summarize(apps: &Value) -> Vec<Value> {
                 .collect();
             let tls = by_id(policies, &extra_id(id, "tls"))
                 .and_then(|p| p["issuers"][0]["module"].as_str())
-                .unwrap_or("acme");
+                // Sin política: ACME, o el TLS del proxy de delante.
+                .unwrap_or(if behind().is_some() { "proxy" } else { "acme" });
             let peers =
                 by_id(&sb["errors"]["routes"], &extra_id(id, "peers")).map(|p| &p["handle"][0]);
             Some(json!({
@@ -1367,6 +1382,7 @@ SfDYivBraM0CIH6nG508I6HKhwvYW3EuGaLU8WoODfUQkX5JRGHq+79k
             ["servers"]["sb"];
         assert_eq!(sb["listen"], json!(["172.18.0.1:8090"]));
         assert_eq!(sb["automatic_https"]["disable"], true);
+        assert_eq!(sb["trusted_proxies"]["ranges"][1], "172.16.0.0/12");
         assert_eq!(
             initial_config_for(None)["apps"]["http"]["servers"]["sb"]["listen"],
             json!([":443"])
