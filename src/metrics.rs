@@ -22,9 +22,11 @@ pub const BOUNDS: [f64; 11] = [
     0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0, 10.0,
 ];
 const BUCKETS: usize = BOUNDS.len() + 1;
-/// Caddy mide cada manejador; cada petición acaba en uno solo de estos. Así
-/// `vars` y `subroute` (rutas con caminos o IPs permitidas) no cuentan doble.
-const TERMINAL: [&str; 2] = ["reverse_proxy", "static_response"];
+/// Caddy solo mide los manejadores del primer nivel de cada ruta: lo que va
+/// dentro de un `subroute` no se mide (se provisiona sin métricas), así que
+/// una ruta envuelta cuenta en su `subroute`. Cada petición acaba en uno solo
+/// de estos tres; `vars` no termina la petición y contaría doble.
+const TERMINAL: [&str; 3] = ["reverse_proxy", "static_response", "subroute"];
 const NEXUS: &str = "http://127.0.0.1:4317";
 
 /// Contadores acumulados de un dominio: cubos `le` (acumulativos, como los
@@ -313,7 +315,9 @@ caddy_http_request_duration_seconds_count{code="200",handler="reverse_proxy",hos
 caddy_http_request_duration_seconds_bucket{code="502",handler="reverse_proxy",host="a.com",method="GET",server="sb",le="+Inf"} 2
 caddy_http_request_duration_seconds_count{code="502",handler="reverse_proxy",host="a.com",method="GET",server="sb"} 2
 caddy_http_request_duration_seconds_count{code="200",handler="vars",host="a.com",method="GET",server="sb"} 8
-caddy_http_request_duration_seconds_count{code="200",handler="subroute",host="a.com",method="GET",server="sb"} 8
+caddy_http_request_duration_seconds_bucket{code="200",handler="subroute",host="c.com",method="GET",server="sb",le="0.005"} 3
+caddy_http_request_duration_seconds_bucket{code="200",handler="subroute",host="c.com",method="GET",server="sb",le="+Inf"} 5
+caddy_http_request_duration_seconds_count{code="200",handler="subroute",host="c.com",method="GET",server="sb"} 5
 caddy_http_request_duration_seconds_count{code="308",handler="static_response",host="a.com",method="GET",server="remaining_auto_https_redirects"} 3
 caddy_http_request_duration_seconds_count{code="301",handler="static_response",host="b.com",method="GET",server="sb"} 4
 caddy_http_request_duration_seconds_bucket{code="301",handler="static_response",host="b.com",method="GET",server="sb",le="+Inf"} 4
@@ -330,7 +334,11 @@ caddy_http_requests_total{handler="reverse_proxy",host="a.com",server="sb"} 8
         assert_eq!(a.classes[2], 6);
         assert_eq!(a.classes[5], 2);
         assert_eq!(m["b.com"].classes[3], 4);
-        assert_eq!(m.len(), 2);
+        // Ruta envuelta (CupraFlow 0.5+): Caddy la mide en el `subroute`.
+        assert_eq!(m["c.com"].requests(), 5);
+        assert_eq!(m["c.com"].buckets[0], 3);
+        assert_eq!(m["c.com"].classes[2], 5);
+        assert_eq!(m.len(), 3);
     }
 
     #[test]
@@ -382,6 +390,6 @@ process_start_time_seconds 1.79476e+09
         let Some(metric::Data::Sum(s)) = &m[1].data else {
             panic!()
         };
-        assert_eq!(s.data_points.len(), 3);
+        assert_eq!(s.data_points.len(), 4);
     }
 }

@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.7.1] - 2026-11-18
+
+### Fixed
+
+- **Traffic metrics were empty since routes are wrapped in a `subroute`.** Caddy only measures the top-level handlers of each route (whatever runs inside a `subroute` is never measured), so a wrapped route is counted on its `subroute`. CupraFlow skipped `subroute` to avoid double counting and sent nothing for those domains. It now counts `subroute` as well; `vars` is still skipped.
+
 ## [0.7.0] - 2026-11-16
 
 ### Added
