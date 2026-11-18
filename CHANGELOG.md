@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.7.2] - 2026-11-18
+
+### Added
+
+- **Update from the panel** (`update_now`). The agent's «Update» button in SecuryBlack now works for CupraFlow: it runs the same signed-release check as the daily one, right away, and restarts into the new version. Only accepted through Nexus (signed), not on the local socket.
+
 ## [0.7.1] - 2026-11-18
 
 ### Fixed

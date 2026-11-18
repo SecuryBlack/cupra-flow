@@ -49,6 +49,8 @@ async fn run(mut shutdown: oneshot::Receiver<()>) {
 
     let registry = command_intake::CommandRegistry::new();
     commands::register(&registry);
+    // Solo por Nexus (firmado), no por el socket local de CromoForge.
+    registry.register("update_now", commands::update_now);
     command_intake::spawn_server(
         registry,
         command_intake::default_socket_path(AGENT_NAME),

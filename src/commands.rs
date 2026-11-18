@@ -34,6 +34,26 @@ async fn route_list(_payload: Value, _p: ProgressSender) -> CommandOutcome {
     outcome(caddy::route_list().await)
 }
 
+/// Botón «Actualizar» del panel: lo mismo que la comprobación diaria, ya.
+/// Si instala, sale a los 2 s para que systemd arranque el binario nuevo
+/// (después de que esta respuesta haya salido).
+pub async fn update_now(_payload: Value, _p: ProgressSender) -> CommandOutcome {
+    let current = env!("CARGO_PKG_VERSION");
+    let cfg = sb_agent_core::updater::UpdaterConfig::new("securyblack", "cupra-flow", "cupraflow", current);
+    match tokio::task::spawn_blocking(move || sb_agent_core::updater::check_now(&cfg)).await {
+        Ok(Ok(true)) => {
+            std::thread::spawn(|| {
+                std::thread::sleep(std::time::Duration::from_secs(2));
+                std::process::exit(0);
+            });
+            CommandOutcome::ok(json!({ "updated": true, "previous_version": current }).to_string())
+        }
+        Ok(Ok(false)) => CommandOutcome::ok(json!({ "updated": false, "current_version": current }).to_string()),
+        Ok(Err(e)) => CommandOutcome::failed(format!("update check failed: {e}")),
+        Err(e) => CommandOutcome::failed(format!("update task panicked: {e}")),
+    }
+}
+
 async fn proxy_status(_payload: Value, _p: ProgressSender) -> CommandOutcome {
     outcome(caddy::status().await)
 }
