@@ -57,6 +57,7 @@ async fn run(mut shutdown: oneshot::Receiver<()>) {
         command_intake::SigningContext {
             server_token: cfg.token.clone().unwrap_or_default(),
             target_agent: AGENT_NAME.to_string(),
+            require_signature: true,
         },
     );
     #[cfg(unix)]

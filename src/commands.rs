@@ -36,7 +36,10 @@ async fn route_list(_payload: Value, _p: ProgressSender) -> CommandOutcome {
 
 /// Botón «Actualizar» del panel: lo mismo que la comprobación diaria, ya.
 /// Si instala, sale a los 2 s para que systemd arranque el binario nuevo
-/// (después de que esta respuesta haya salido).
+/// (después de que esta respuesta haya salido). La salida se programa dentro
+/// de la tarea bloqueante: si la orden caduca y se suelta este handler, la
+/// tarea sigue y el reinicio también, así nunca queda el binario nuevo en
+/// disco con el viejo en marcha.
 pub async fn update_now(_payload: Value, _p: ProgressSender) -> CommandOutcome {
     let current = env!("CARGO_PKG_VERSION");
     let cfg = sb_agent_core::updater::UpdaterConfig::new(
@@ -45,17 +48,21 @@ pub async fn update_now(_payload: Value, _p: ProgressSender) -> CommandOutcome {
         "cupraflow",
         current,
     );
-    match tokio::task::spawn_blocking(move || sb_agent_core::updater::check_now(&cfg)).await {
-        Ok(Ok(true)) => {
+    let result = tokio::task::spawn_blocking(move || {
+        let updated = sb_agent_core::updater::check_now(&cfg)?;
+        if updated {
             std::thread::spawn(|| {
                 std::thread::sleep(std::time::Duration::from_secs(2));
                 std::process::exit(0);
             });
-            CommandOutcome::ok(json!({ "updated": true, "previous_version": current }).to_string())
         }
-        Ok(Ok(false)) => {
-            CommandOutcome::ok(json!({ "updated": false, "current_version": current }).to_string())
-        }
+        Ok::<_, Box<dyn std::error::Error + Send + Sync>>(updated)
+    })
+    .await;
+    match result {
+        Ok(Ok(updated)) => CommandOutcome::ok(
+            json!({ "updated": updated, "previous_version": current }).to_string(),
+        ),
         Ok(Err(e)) => CommandOutcome::failed(format!("update check failed: {e}")),
         Err(e) => CommandOutcome::failed(format!("update task panicked: {e}")),
     }
