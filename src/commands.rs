@@ -39,7 +39,12 @@ async fn route_list(_payload: Value, _p: ProgressSender) -> CommandOutcome {
 /// (después de que esta respuesta haya salido).
 pub async fn update_now(_payload: Value, _p: ProgressSender) -> CommandOutcome {
     let current = env!("CARGO_PKG_VERSION");
-    let cfg = sb_agent_core::updater::UpdaterConfig::new("securyblack", "cupra-flow", "cupraflow", current);
+    let cfg = sb_agent_core::updater::UpdaterConfig::new(
+        "securyblack",
+        "cupra-flow",
+        "cupraflow",
+        current,
+    );
     match tokio::task::spawn_blocking(move || sb_agent_core::updater::check_now(&cfg)).await {
         Ok(Ok(true)) => {
             std::thread::spawn(|| {
@@ -48,7 +53,9 @@ pub async fn update_now(_payload: Value, _p: ProgressSender) -> CommandOutcome {
             });
             CommandOutcome::ok(json!({ "updated": true, "previous_version": current }).to_string())
         }
-        Ok(Ok(false)) => CommandOutcome::ok(json!({ "updated": false, "current_version": current }).to_string()),
+        Ok(Ok(false)) => {
+            CommandOutcome::ok(json!({ "updated": false, "current_version": current }).to_string())
+        }
         Ok(Err(e)) => CommandOutcome::failed(format!("update check failed: {e}")),
         Err(e) => CommandOutcome::failed(format!("update task panicked: {e}")),
     }
