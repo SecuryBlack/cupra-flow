@@ -5,6 +5,11 @@ param(
     [string]$Token = ""
 )
 
+# Windows Server 2019 / PS 5.1: force TLS 1.2+ and allow dot-sourcing the shared lib.
+# Must stay below param(): nothing but comments may precede it.
+[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12 -bor [Net.SecurityProtocolType]::Tls11 -bor [Net.SecurityProtocolType]::Tls
+Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass -Force -ErrorAction SilentlyContinue
+
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 
